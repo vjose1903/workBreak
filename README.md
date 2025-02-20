@@ -6,15 +6,15 @@ Este bot permite interactuar automáticamente con un editor de código y un nave
 
 * Python 3.x
 * Pip (administrador de paquetes de Python)
-* Dependencias: `<span>pyautogui</span>`, `<span>argparse</span>`, `<span>webbrowser</span>`, `<span>subprocess</span>`, `<span>os</span>`
+* Dependencias: `pyautogui`, `argparse`, `webbrowser`, `subprocess`, `os`
 
 ## Instalación
 
 ### 1. Clonar el repositorio
 
 ```
-    git clone https://github.com/tu-repositorio/bot-editor-navegador.git
-    cd bot-editor-navegador
+    git clone https://github.com/vjose1903/workBreak
+    cd workBreak
 ```
 
 ### 2. Instalar dependencias
@@ -42,9 +42,9 @@ Ejecutar el script con los parámetros requeridos:
 
 ### Parámetros
 
-* `<span>-editor</span>` (requerido): Editor a usar (`<span>cursor</span>` o `<span>vsCode</span>`)
-* `<span>-browser</span>` (opcional): Navegador a usar (`<span>chrome</span>`, `<span>edge</span>`, `<span>opera</span>`, `<span>firefox</span>`)
-* `<span>-web</span>` (opcional): Lista de URLs separadas por coma
+* `-editor` (requerido): Editor a usar (`cursor` o `vsCode`)
+* `-browser` (opcional): Navegador a usar (`chrome`, `edge`, `opera`, `firefox`)
+* `-web` (opcional): Lista de URLs separadas por coma
 
 ## Funcionamiento
 
@@ -55,9 +55,9 @@ Ejecutar el script con los parámetros requeridos:
 
 ## Detener el bot
 
-Para finalizar el script, presiona `<span>CTRL + C</span>` en la terminal.
+Para finalizar el script, presiona `CTRL + C` en la terminal.
 
 ## Notas
 
-* En Windows, puede ser necesario ejecutar la terminal como administrador para que `<span>pyautogui</span>` funcione correctamente.
-* En macOS, puede requerir permisos adicionales de accesibilidad en `<span>Preferencias del Sistema > Seguridad y privacidad > Accesibilidad</span>`.
+* En Windows, puede ser necesario ejecutar la terminal como administrador para que `pyautogui` funcione correctamente.
+* En macOS, puede requerir permisos adicionales de accesibilidad en `Preferencias del Sistema > Seguridad y privacidad > Accesibilidad`.
