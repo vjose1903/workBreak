@@ -1,0 +1,5 @@
+pyautogui
+argparse
+webbrowser
+subprocess
+os
