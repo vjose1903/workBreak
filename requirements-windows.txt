@@ -1,0 +1,3 @@
+-r requirements-base.txt
+pywin32>=305; platform_system=="Windows"
+psutil; platform_system=="Windows"
