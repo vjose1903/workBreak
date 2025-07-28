@@ -49,3 +49,27 @@ class BaseAutomation:
         """Genera un texto aleatorio de longitud 'longitud'"""
         return "".join(random.choices("abcdefghijklmnopqrstuvwxyz", k=longitud))
 
+    def obtener_codigo_boilerplate_aleatorio(self) -> str:
+        """Obtiene el contenido completo de un archivo de boilerplate de manera aleatoria"""
+        try:
+            boilerplate_dir = os.path.join(os.path.dirname(__file__), "boilerplate")
+            archivos = [f for f in os.listdir(boilerplate_dir) if f.endswith(('.ts', '.tsx', '.js', '.jsx'))]
+            
+            if not archivos:
+                logging.warning("No se encontraron archivos de boilerplate")
+                return self.generar_texto_aleatorio()
+            
+            archivo_seleccionado = random.choice(archivos)
+            ruta_archivo = os.path.join(boilerplate_dir, archivo_seleccionado)
+            
+            logging.info(f"Leyendo archivo de boilerplate: {archivo_seleccionado}")
+            
+            with open(ruta_archivo, 'r', encoding='utf-8') as f:
+                contenido = f.read()
+            
+            return contenido
+            
+        except Exception as e:
+            logging.error(f"Error al leer archivo de boilerplate: {e}")
+            return self.generar_texto_aleatorio()
+

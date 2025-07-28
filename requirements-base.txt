@@ -1,3 +1,6 @@
 pyautogui
 argparse
 pygetwindow
+pyperclip
+python-dotenv
+requests

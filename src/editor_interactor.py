@@ -4,6 +4,7 @@ import subprocess
 import sys
 import time
 import random
+import os
 from base_automation import BaseAutomation
 from statistics_tracker import StatisticsTracker
 
@@ -20,6 +21,9 @@ class EditorInteractor(BaseAutomation):
             "vsCode": ["code"],
             "cursor": ["cursor"] if self.is_windows else ["/Applications/Cursor.app/Contents/MacOS/Cursor"]
         }
+        
+        # Configuración de escritura rápida
+        self.typing_interval_fast = 0.01  # Escritura súper rápida
 
     def validar_editor(self, value: str) -> str:
         """Valida que el editor esté en la lista de editores válidos"""
@@ -59,7 +63,8 @@ class EditorInteractor(BaseAutomation):
 
     def interactuar_editor(self) -> None:
         """Simula la interacción con el editor escribiendo texto y moviendo el mouse"""
-        duracion = random.uniform(1*60, 4*60)  # ENTRE 1 Y 4 MINUTOS
+        # duracion = random.uniform(1*60, 4*60)  # ENTRE 1 Y 4 MINUTOS
+        duracion = random.uniform(10, 20)  # ENTRE 1 Y 4 MINUTOS
         tiempo_final = time.time() + duracion
         tiempo_inicio = time.time()
         
@@ -81,19 +86,57 @@ class EditorInteractor(BaseAutomation):
             self.registrar_tiempo_interaccion(tiempo_inicio)
 
     def realizar_interacciones(self) -> None:
-        """Simula una interacción típica: escribir, seleccionar, borrar y mover el mouse"""
-        texto = self.generar_texto_aleatorio()
-        pyautogui.write(texto, interval=self.TYPING_INTERVAL)
-        pyautogui.hotkey(self.cmd_key, 'a')
-        pyautogui.press('backspace')
-
-        x = random.randint(-self.EDITOR_WINDOW_OFFSET, self.EDITOR_WINDOW_OFFSET)
-        y = random.randint(-self.EDITOR_WINDOW_OFFSET, self.EDITOR_WINDOW_OFFSET)
-        pyautogui.moveRel(x, y, duration=0.3)
-        pyautogui.click()
+        """Simula una interacción típica: escribir código de boilerplate rápidamente"""
+        # Obtener código de boilerplate aleatorio
+        codigo = self.obtener_codigo_boilerplate_aleatorio()
+        
+        # Escribir el código completo súper rápido
+        self._escribir_codigo_rapido(codigo)
+        
+        # Simular interacciones adicionales
+        self._simular_interacciones_adicionales()
 
     def registrar_tiempo_interaccion(self, tiempo_inicio: float) -> None:
         """Registra el tiempo de interacción con el editor"""
         tiempo_real = time.time() - tiempo_inicio
         self.stats_tracker.register_editor_session(tiempo_real)
         logging.info(f"Interacción con editor finalizada, duración real: {tiempo_real / 60:.1f} minutos")
+
+    def _escribir_codigo_rapido(self, codigo: str) -> None:
+        """Escribe el código súper rápido sin formato especial"""
+        try:
+            # Escribir todo el código de una vez muy rápido
+            pyautogui.write(codigo, interval=self.typing_interval_fast)
+            logging.info("Código escrito rápidamente")
+            
+        except Exception as e:
+            logging.error(f"Error al escribir código rápido: {e}")
+
+    def _simular_interacciones_adicionales(self) -> None:
+        """Simula interacciones adicionales después de escribir el código"""
+        try:
+            # Hacer varios clics aleatorios en la ventana
+            for _ in range(random.randint(3, 8)):
+                x = random.randint(-self.EDITOR_WINDOW_OFFSET, self.EDITOR_WINDOW_OFFSET)
+                y = random.randint(-self.EDITOR_WINDOW_OFFSET, self.EDITOR_WINDOW_OFFSET)
+                pyautogui.moveRel(x, y, duration=0.2)
+                pyautogui.click()
+                time.sleep(random.uniform(0.1, 0.3))
+            
+            # Mover el scroll arriba y abajo
+            for _ in range(random.randint(2, 5)):
+                pyautogui.scroll(random.randint(-3, 3))
+                time.sleep(random.uniform(0.2, 0.5))
+            
+            # Cerrar la pestaña actual
+            pyautogui.hotkey(self.cmd_key, 'w')
+            time.sleep(0.5)
+            
+            # Abrir nueva pestaña para el siguiente archivo
+            pyautogui.hotkey(self.cmd_key, 'n')
+            time.sleep(0.5)
+            
+            logging.info("Interacciones adicionales completadas")
+            
+        except Exception as e:
+            logging.error(f"Error durante interacciones adicionales: {e}")
