@@ -10,6 +10,6 @@ if %ERRORLEVEL% == 0 (
     exit /b 1
 )
 
-echo.&echo.&echo ----- Instalacion completada. Puedes ejecutar el bot con 'python src/bot.py' -----&echo.&echo.
+echo.&echo.&echo ----- Instalacion completada. Puedes ejecutar el bot con 'python src/main.py ...' -----&echo.&echo.
 
 pause

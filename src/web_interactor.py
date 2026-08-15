@@ -3,17 +3,19 @@ import pyautogui
 import subprocess
 import time
 import random
-from base_automation import BaseAutomation
+from base_automation import BaseAutomation, FailsafeActivo
 from statistics_tracker import StatisticsTracker
+
 
 class WebInteractor(BaseAutomation):
     def __init__(self, stats_tracker: StatisticsTracker):
         super().__init__()
-        
+
         self.stats_tracker = stats_tracker
         self.VALID_BROWSERS = ["chrome", "edge", "opera", "firefox"]
         self.paginas = []
         self.browser = None
+        self.browser_abierto = False
 
         # Configuración de navegadores y comandos
         self.browser_configs = {
@@ -34,47 +36,48 @@ class WebInteractor(BaseAutomation):
         self.browser = self.validar_browser(browser)
 
     def set_paginas(self, paginas: list) -> None:
-        """Establece las páginas a las que navegar"""
-        self.paginas = paginas
+        """Establece las páginas a las que navegar (descartando entradas vacías)"""
+        self.paginas = [p.strip() for p in paginas if p and p.strip()]
 
-    def activar_navegador(self):
-        """Intenta activar el navegador (macOS y Windows)"""
+    def activar_navegador(self) -> bool:
+        """Activa el navegador de forma NO destructiva.
+
+        Activa la ventana existente con `activar_aplicacion`; si el navegador
+        no está abierto, lo lanza UNA sola vez. Nunca mata procesos existentes.
+        """
         if not self.browser:
-            return
+            logging.warning("No hay navegador configurado")
+            return False
 
         config = self.browser_configs.get(self.browser)
         if not config:
             logging.error(f"Navegador no soportado: {self.browser}")
-            return
+            return False
 
         try:
-            if self.is_windows:
-                self.activar_navegador_windows(config['win'])
-            elif self.is_mac:
-                self.activar_navegador_mac(config['mac'], config['cmd'])
+            if self.activar_aplicacion(config['win'], config['mac']):
+                return True
 
+            if not self.browser_abierto:
+                self._lanzar_navegador(config)
+                self.browser_abierto = True
+                return True
+
+            logging.warning(f"Navegador {self.browser} no disponible y ya se intentó lanzar antes")
+            return False
         except Exception as e:
-            logging.error(f"Error activando navegador {self.browser}: {e}")
+            logging.error(f"Error activando navegador {self.browser}: {e}", exc_info=True)
+            return False
 
-    def activar_navegador_windows(self, process_name: str):
-        """Activa el navegador en Windows por su proceso"""
-        try:
-            subprocess.Popen(["taskkill", "/IM", process_name], shell=True, stderr=subprocess.PIPE, stdout=subprocess.PIPE)
-            time.sleep(1)
-            subprocess.Popen([process_name], shell=True)
-            logging.info(f"Navegador {self.browser} activado (Windows, por proceso)")
-            time.sleep(2)
-        except Exception as e:
-            logging.error(f"Error activando navegador (Windows): {e}")
-
-    def activar_navegador_mac(self, browser_app: str, cmd: list):
-        """Activa el navegador en macOS por aplicación"""
-        try:
-            subprocess.run(['osascript', '-e', f'tell application "{browser_app}" to activate'], check=True)
-            logging.info(f"Navegador {self.browser} activado (macOS)")
-            time.sleep(1)
-        except subprocess.CalledProcessError as e:
-            logging.error(f"Error activando navegador (macOS): {e}")
+    def _lanzar_navegador(self, config) -> None:
+        """Lanza el navegador la primera vez que no está abierto (sin matar nada)"""
+        if self.is_mac:
+            subprocess.run(config['cmd'], check=True)
+            logging.info(f"Navegador {self.browser} lanzado (macOS)")
+        elif self.is_windows:
+            subprocess.Popen(config['win'], shell=True)
+            logging.info(f"Navegador {self.browser} lanzado (Windows)")
+        time.sleep(1)
 
     def interactuar_web(self) -> None:
         """Navega por las páginas y las interactúa"""
@@ -82,31 +85,60 @@ class WebInteractor(BaseAutomation):
             logging.warning("No hay páginas para interactuar")
             return
 
-        try:
-            for pagina in self.paginas:
-                self.activar_navegador()  # Asegura que el navegador esté al frente
-                self.move_cursor_to_center()  # Mover al centro de la pantalla
+        if not self.browser:
+            logging.warning("No hay navegador configurado")
+            return
 
-                pyautogui.hotkey(self.cmd_key, 't')
-                time.sleep(1)
-                
-                pyautogui.write(pagina)
-                pyautogui.press('return')
-                logging.info(f"Navegando a {pagina}")
-                time.sleep(3)
-                
-                self.interactuar_con_pagina(pagina)
-                
-                pyautogui.hotkey(self.cmd_key, 'w')
-                logging.info(f"Cerrando pestaña de: {pagina}")
+        for pagina in self.paginas:
+            self._procesar_pagina(pagina)
+
+    def _procesar_pagina(self, pagina) -> None:
+        """Abre, interactúa y cierra una página con try/except/finally por página.
+
+        Una página que falle no deja pestañas basura y no detiene el bot.
+        """
+        pagina_abierta = False
+        try:
+            if not self.activar_navegador():
+                logging.error(f"No se pudo activar el navegador para {pagina}")
+                return
+
+            self.move_cursor_to_center()  # Asegura foco
+
+            pyautogui.hotkey(self.cmd_key, 't')  # Pestaña nueva
+            time.sleep(0.8)
+
+            if not self.copiar_al_portapapeles(pagina):
+                logging.error(f"No se pudo copiar la URL de {pagina}, se omite")
+                return
+
+            pyautogui.hotkey(self.cmd_key, 'v')
+            pyautogui.press('return')
+            pagina_abierta = True
+            logging.info(f"Navegando a {pagina}")
+            time.sleep(3)  # Deja cargar la página
+
+            self.interactuar_con_pagina(pagina)
+        except FailsafeActivo:
+            raise
         except Exception as e:
-            logging.error(f"Error durante la interacción web: {e}")
+            logging.error(f"Error procesando página {pagina}: {e}", exc_info=True)
+        finally:
+            if pagina_abierta:
+                try:
+                    pyautogui.hotkey(self.cmd_key, 'w')
+                    logging.info(f"Cerrando pestaña de: {pagina}")
+                except Exception:
+                    logging.debug(f"No se pudo cerrar la pestaña de {pagina}", exc_info=True)
 
     def interactuar_con_pagina(self, pagina):
         """Interactúa con una página abierta en el navegador"""
         duracion = random.uniform(10, 20)
-        tiempo_final = time.time() + duracion
-        tiempo_inicio = time.time()
+        restante = self.tiempo_restante()
+        if restante is not None:
+            duracion = min(duracion, restante)
+        tiempo_final = time.monotonic() + duracion
+        tiempo_inicio = time.monotonic()
         logging.info(f"Interactuando con {pagina} por {duracion:.1f} segundos")
 
         try:
@@ -115,8 +147,8 @@ class WebInteractor(BaseAutomation):
             pyautogui.moveTo(center_x, center_y, duration=0.3)
             pyautogui.click()
 
-            while time.time() < tiempo_final:
-                # Realizar clicks aleatorios dentro del radio
+            while self._queda_tiempo(tiempo_final):
+                # Clicks aleatorios dentro del radio
                 x_offset = random.randint(-30, 30)
                 y_offset = random.randint(-30, 30)
                 target_x = center_x + x_offset
@@ -128,17 +160,26 @@ class WebInteractor(BaseAutomation):
                 # Scroll aleatorio
                 pyautogui.scroll(random.randint(-300, 300))
                 time.sleep(random.uniform(1, 3))
-                
+
             self.registrar_tiempo_interaccion(pagina, tiempo_inicio)
         except pyautogui.FailSafeException:
             logging.warning("Failsafe activado durante la navegación")
-            self.registrar_tiempo_interaccion(pagina, tiempo_inicio)
+            raise FailsafeActivo("Failsafe activado durante la interacción web")
         except Exception as e:
-            logging.error(f"Error interactuando con página {pagina}: {e}")
+            logging.error(f"Error interactuando con página {pagina}: {e}", exc_info=True)
             self.registrar_tiempo_interaccion(pagina, tiempo_inicio)
 
+    def _queda_tiempo(self, tiempo_final) -> bool:
+        """Indica si queda tiempo (duración de la página y límite global)"""
+        if time.monotonic() >= tiempo_final:
+            return False
+        restante = self.tiempo_restante()
+        if restante is not None and restante <= 0:
+            return False
+        return True
+
     def registrar_tiempo_interaccion(self, pagina, tiempo_inicio):
-        """Registra el tiempo de interacción con una página"""
-        tiempo_real = time.time() - tiempo_inicio
+        """Registra el tiempo de interacción con una página (con time.monotonic)"""
+        tiempo_real = time.monotonic() - tiempo_inicio
         self.stats_tracker.register_web_session(pagina, tiempo_real)
         logging.info(f"Interacción con {pagina} finalizada, duración real: {tiempo_real:.1f} segundos")

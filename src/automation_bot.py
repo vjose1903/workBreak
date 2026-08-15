@@ -1,10 +1,13 @@
 import argparse
-import time
 import logging
-import sys
+import time
 from typing import Optional
 
+import pyautogui
+
+from base_automation import FailsafeActivo
 from editor_interactor import EditorInteractor
+from menu import Configuracion, configuracion_desde_args, menu_interactivo
 from web_interactor import WebInteractor
 from statistics_tracker import StatisticsTracker
 
@@ -15,7 +18,7 @@ class AutomationBot:
         self.web_interactor = WebInteractor(self.stats_tracker)
 
     def validar_tiempo(self, value: str) -> Optional[int]:
-        """Valida el tiempo proporcionado por el usuario"""
+        """Valida el tiempo proporcionado por el usuario (minutos positivos o 'indefinido')"""
         if value.lower() == 'indefinido':
             return None
         try:
@@ -29,8 +32,9 @@ class AutomationBot:
     def configurar_parser(self):
         """Configura el parser de argumentos para la ejecución del bot"""
         parser = argparse.ArgumentParser(description="Bot para descansos en el trabajo")
-        parser.add_argument("-editor", type=self.editor_interactor.validar_editor, required=True,
-                            help=f"Editor a usar: {', '.join(self.editor_interactor.VALID_EDITORS)}")
+        parser.add_argument("-editor", type=self.editor_interactor.validar_editor, required=False,
+                            help=f"Editor a usar: {', '.join(self.editor_interactor.VALID_EDITORS)} "
+                                 f"(si no se pasa, se muestra el menú interactivo)")
         parser.add_argument("-browser", type=self.web_interactor.validar_browser, required=False,
                             help=f"Navegador a usar: {', '.join(self.web_interactor.VALID_BROWSERS)}")
         parser.add_argument("-web", type=str, required=False,
@@ -39,67 +43,107 @@ class AutomationBot:
                             help="Tiempo total de ejecución en minutos (default: indefinido)")
         return parser
 
-    def gestionar_ejecucion(self, args):
-        """Gestiona la ejecución del bot según los parámetros proporcionados"""
-        paginas = args.web.split(",") if args.web else []
+    def _tiempo_restante(self) -> float:
+        """Segundos restantes de ejecución (infinito si no hay límite); usa time.monotonic()"""
+        restante = self.editor_interactor.tiempo_restante()
+        if restante is None:
+            return float("inf")
+        return restante
+
+    def gestionar_ejecucion(self, config: Configuracion) -> int:
+        """Gestiona la ejecución del bot con resiliencia; devuelve el código de salida"""
+        if config.fuente:
+            self.editor_interactor.fuente_codigo = config.fuente
+
+        paginas = list(config.paginas)
         self.web_interactor.set_paginas(paginas)
-        
-        if args.browser:
-            self.web_interactor.set_browser(args.browser)
-        
-        tiempo_inicio = time.time()
+
+        if config.browser:
+            self.web_interactor.set_browser(config.browser)
+
+        if config.tiempo:
+            segundos_limite = config.tiempo * 60
+            self.editor_interactor.set_limite_tiempo(segundos_limite)
+            self.web_interactor.set_limite_tiempo(segundos_limite)
+
+        self.editor_interactor.mantener_despierto_iniciar()
+
+        codigo_salida = 0
+        fallos_consecutivos = 0
+        ultimo_log = time.monotonic()
 
         try:
-            while True:
-                if self.comprobar_tiempo_ejecucion(args.tiempo, tiempo_inicio):
+            while self._tiempo_restante() > 0:
+                try:
+                    self.ejecutar_tareas(config.editor, paginas)
+                    fallos_consecutivos = 0
+                except (pyautogui.FailSafeException, FailsafeActivo):
+                    logging.warning("Failsafe activado (mouse en esquina); deteniendo el bot")
+                    codigo_salida = 2
                     break
-                
-                self.ejecutar_tareas(args.editor, paginas)
-                
-                time.sleep(1)
+                except KeyboardInterrupt:
+                    logging.info("Programa terminado por el usuario (Ctrl+C)")
+                    codigo_salida = 130
+                    break
+                except Exception:
+                    fallos_consecutivos += 1
+                    logging.error(
+                        f"Error inesperado en iteración ({fallos_consecutivos} fallos consecutivos)",
+                        exc_info=True,
+                    )
+                    if fallos_consecutivos >= 5:
+                        logging.error("Demasiados fallos consecutivos (5); abortando ejecución")
+                        codigo_salida = 1
+                        break
+                    time.sleep(min(60, 2 ** fallos_consecutivos))
 
+                if time.monotonic() - ultimo_log >= 300:
+                    restante = self._tiempo_restante()
+                    resto_str = f"{restante / 60:.1f} minutos" if restante != float("inf") else "indefinido"
+                    logging.info(f"Bot activo; tiempo restante: {resto_str}")
+                    ultimo_log = time.monotonic()
         except KeyboardInterrupt:
-            logging.info("Programa terminado por el usuario")
-        except Exception as e:
-            logging.error(f"Error inesperado: {e}")
+            logging.info("Programa terminado por el usuario (Ctrl+C)")
+            codigo_salida = 130
         finally:
-            self.finalizar_ejecucion()
+            try:
+                self.editor_interactor.mantener_despierto_detener()
+            except Exception as e:
+                logging.error(f"Error deteniendo anti-reposo: {e}")
+            try:
+                self.editor_interactor.restaurar_portapapeles()
+            except Exception as e:
+                logging.error(f"Error restaurando el portapapeles: {e}")
+            codigo_salida = self._imprimir_y_cerrar(codigo_salida)
 
-    def comprobar_tiempo_ejecucion(self, tiempo_limite: Optional[int], tiempo_inicio: float) -> bool:
-        """Verifica si el tiempo límite de ejecución ha sido alcanzado"""
-        if tiempo_limite is None:
-            return False
-        
-        tiempo_transcurrido = (time.time() - tiempo_inicio) / 60
-        logging.info(f"Tiempo transcurrido: {tiempo_transcurrido:.1f} minutos")
-                    
-        if tiempo_transcurrido >= tiempo_limite:
-            logging.info(f"Tiempo total de ejecución ({tiempo_limite} minutos) alcanzado")
-            return True
-        return False
+        return codigo_salida
+
+    def _imprimir_y_cerrar(self, codigo_salida: int) -> int:
+        """Imprime las estadísticas finales y devuelve el código de salida"""
+        logging.info("Finalizando ejecución...")
+        self.stats_tracker.print_statistics()
+        return codigo_salida
 
     def ejecutar_tareas(self, editor: str, paginas: list):
-        """Ejecuta las tareas principales: abrir el editor, interactuar con él y navegar por la web"""
-        self.editor_interactor.abrir_editor(editor)
+        """Ejecuta las tareas principales: asegurar editor, interactuar y navegar por la web"""
+        self.editor_interactor.asegurar_editor_abierto(editor)
         self.editor_interactor.interactuar_editor()
-        
+
         if paginas:
             self.web_interactor.interactuar_web()
 
-    def finalizar_ejecucion(self):
-        """Muestra las estadísticas y finaliza la ejecución"""
-        logging.info("Finalizando ejecución...")
-        self.stats_tracker.print_statistics()
-        sys.exit(0)
-
-    def ejecutar(self):
-        """Configura los argumentos y ejecuta el bot"""
+    def ejecutar(self) -> int:
+        """Si se pasa el editor por CLI usa la configuración de args; si no, muestra el menú interactivo"""
         parser = self.configurar_parser()
         args = parser.parse_args()
-        
-        self.gestionar_ejecucion(args)
 
+        if args.editor:
+            config = configuracion_desde_args(args)
+        else:
+            config = menu_interactivo()
 
-if __name__ == "__main__":
-    bot = AutomationBot()
-    bot.ejecutar()
+        if config is None:
+            logging.info("Salida por menú; el bot no se ejecutó")
+            return 0
+
+        return self.gestionar_ejecucion(config)

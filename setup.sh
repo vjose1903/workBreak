@@ -10,4 +10,4 @@ else
     exit 1
 fi
 
-echo -e "\n\n ----- Instalación completada. Puedes ejecutar el bot con 'python src/bot.py' ----- \n\n"
+echo -e "\n\n ----- Instalación completada. Puedes ejecutar el bot con 'python src/main.py ...' ----- \n\n"

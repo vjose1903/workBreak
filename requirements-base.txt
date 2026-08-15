@@ -1,3 +1,4 @@
 pyautogui
 argparse
 pygetwindow
+pyperclip
