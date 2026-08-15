@@ -8,6 +8,7 @@ DIRS_IGNORADOS = {
     "node_modules", "dist", "build", ".next", ".git", ".cache",
     "coverage", "out", ".venv", "venv", "target", ".turbo",
 }
+MIN_LINEAS = 20
 MAX_LINEAS = 400
 
 
@@ -16,7 +17,8 @@ class RealProjectSource:
 
     Escanea el directorio (ignorando node_modules, dist, build, etc.) y
     devuelve el contenido de archivos React/TS del proyecto real para usarlo
-    como código a pegar en el editor.
+    como código a pegar en el editor. Solo considera archivos con más de 20
+    y menos de 400 líneas de código.
     """
 
     def __init__(self, directorio):
@@ -26,26 +28,44 @@ class RealProjectSource:
         self.archivos = self._escanear()
         if not self.archivos:
             raise ValueError(
-                f"No se encontraron archivos React/TypeScript en: {self.directorio}"
+                f"No se encontraron archivos React/TypeScript de 20 a 400 líneas en: {self.directorio}"
             )
         logging.info(f"RealProjectSource: {len(self.archivos)} archivos encontrados")
 
+    def _contar_lineas(self, ruta) -> int:
+        """Cuenta las líneas del archivo; deja de contar al superar MAX_LINEAS."""
+        try:
+            with open(ruta, encoding="utf-8", errors="replace") as f:
+                n = 0
+                for _ in f:
+                    n += 1
+                    if n > MAX_LINEAS:
+                        return n
+                return n
+        except Exception:
+            return -1
+
     def _escanear(self) -> list:
-        """Escanea el directorio buscando archivos React/TS, excluyendo build dirs."""
+        """Escanea el directorio buscando archivos React/TS de 20 a 400 líneas."""
         componentes, otros = [], []
         for raiz, dirs, nombres in os.walk(self.directorio):
             dirs[:] = [d for d in dirs if d not in DIRS_IGNORADOS]
             for nombre in nombres:
+                if not nombre.endswith(EXTENSIONES_REACT):
+                    continue
                 ruta = Path(raiz) / nombre
+                lineas = self._contar_lineas(ruta)
+                if lineas < MIN_LINEAS or lineas > MAX_LINEAS:
+                    continue
                 if nombre.endswith((".tsx", ".jsx")):
                     componentes.append(ruta)
-                elif nombre.endswith((".ts", ".js")):
+                else:
                     otros.append(ruta)
         # Los componentes React primero (más representativos para las capturas)
         return componentes + otros
 
     def obtener_codigo(self) -> str:
-        """Devuelve el contenido de un archivo real elegido al azar (acotado en líneas)."""
+        """Devuelve el contenido completo de un archivo real elegido al azar."""
         for _ in range(10):
             archivo = random.choice(self.archivos)
             try:
@@ -55,8 +75,6 @@ class RealProjectSource:
                 continue
 
             lineas = contenido.splitlines()
-            if len(lineas) > MAX_LINEAS:
-                lineas = lineas[:MAX_LINEAS]
             logging.info(f"Fuente real: {archivo} ({len(lineas)} líneas)")
             return "\n".join(lineas)
 

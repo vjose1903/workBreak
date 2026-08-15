@@ -3,6 +3,7 @@ import pyautogui
 import subprocess
 import time
 import random
+from typing import Optional
 from base_automation import BaseAutomation, FailsafeActivo
 from statistics_tracker import StatisticsTracker
 
@@ -79,8 +80,11 @@ class WebInteractor(BaseAutomation):
             logging.info(f"Navegador {self.browser} lanzado (Windows)")
         time.sleep(1)
 
-    def interactuar_web(self) -> None:
-        """Navega por las páginas y las interactúa"""
+    def interactuar_web(self, duracion_maxima: Optional[float] = None) -> None:
+        """Navega por las páginas y las interactúa.
+
+        `duracion_maxima` limita el turno actual (usado al alternar con el editor).
+        """
         if not self.paginas:
             logging.warning("No hay páginas para interactuar")
             return
@@ -89,7 +93,10 @@ class WebInteractor(BaseAutomation):
             logging.warning("No hay navegador configurado")
             return
 
+        inicio = time.monotonic()
         for pagina in self.paginas:
+            if duracion_maxima is not None and time.monotonic() - inicio >= duracion_maxima:
+                break
             self._procesar_pagina(pagina)
 
     def _procesar_pagina(self, pagina) -> None:
@@ -106,7 +113,7 @@ class WebInteractor(BaseAutomation):
             self.move_cursor_to_center()  # Asegura foco
 
             pyautogui.hotkey(self.cmd_key, 't')  # Pestaña nueva
-            time.sleep(0.8)
+            time.sleep(0.4)
 
             if not self.copiar_al_portapapeles(pagina):
                 logging.error(f"No se pudo copiar la URL de {pagina}, se omite")
@@ -116,7 +123,7 @@ class WebInteractor(BaseAutomation):
             pyautogui.press('return')
             pagina_abierta = True
             logging.info(f"Navegando a {pagina}")
-            time.sleep(3)  # Deja cargar la página
+            time.sleep(2)  # Deja cargar la página
 
             self.interactuar_con_pagina(pagina)
         except FailsafeActivo:

@@ -16,13 +16,20 @@ class RealProjectSourceTest(unittest.TestCase):
         src = os.path.join(self.raiz, "src")
         os.makedirs(src, exist_ok=True)
         with open(os.path.join(src, "App.tsx"), "w") as f:
-            f.write("import React from 'react';\nexport const App = () => <div>Hola</div>;\n")
+            f.write("import React from 'react';\n")
+            for i in range(30):
+                f.write(f"export const item{i} = {i};\n")
+            f.write("export const App = () => <div>Hola</div>;\n")
         with open(os.path.join(src, "util.ts"), "w") as f:
-            f.write("export const x = 1;\n")
+            for i in range(25):
+                f.write(f"export const valor{i} = {i};\n")
+        with open(os.path.join(src, "corto.tsx"), "w") as f:
+            f.write("export const corto = 1;\n")
         node_modules = os.path.join(self.raiz, "node_modules")
         os.makedirs(node_modules, exist_ok=True)
         with open(os.path.join(node_modules, "lib.tsx"), "w") as f:
-            f.write("export const y = 2;\n")
+            for i in range(30):
+                f.write(f"export const y{i} = {i};\n")
 
     def tearDown(self):
         self.tmp.cleanup()
@@ -33,6 +40,7 @@ class RealProjectSourceTest(unittest.TestCase):
         self.assertIn("App.tsx", nombres)
         self.assertIn("util.ts", nombres)
         self.assertNotIn("lib.tsx", nombres)
+        self.assertNotIn("corto.tsx", nombres)
 
     def test_obtener_codigo_devuelve_contenido_real(self):
         fuente = RealProjectSource(self.raiz)
@@ -48,6 +56,14 @@ class RealProjectSourceTest(unittest.TestCase):
         with tempfile.TemporaryDirectory() as vacio:
             with self.assertRaises(ValueError):
                 RealProjectSource(vacio)
+
+    def test_archivo_mas_de_400_lineas_excluido(self):
+        with tempfile.TemporaryDirectory() as dir_proyecto:
+            with open(os.path.join(dir_proyecto, "grande.tsx"), "w") as f:
+                for i in range(500):
+                    f.write(f"export const v{i} = {i};\n")
+            with self.assertRaises(ValueError):
+                RealProjectSource(dir_proyecto)
 
 
 class FuenteComunTest(unittest.TestCase):

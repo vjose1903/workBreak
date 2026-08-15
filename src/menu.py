@@ -1,5 +1,8 @@
+import json
 import logging
 from dataclasses import dataclass, field
+from datetime import datetime
+from pathlib import Path
 from typing import Any, List, Optional
 
 from code_generator import CodeGenerator
@@ -8,6 +11,9 @@ from code_source import RealProjectSource
 EDITORES_VALIDOS = ["vsCode", "cursor"]
 NAVEGADORES_VALIDOS = ["chrome", "edge", "opera", "firefox"]
 NAVEGADOR_NINGUNO = {"ninguno", "none", "no", "0", ""}
+MAX_HISTORIAL = 5
+
+RUTA_HISTORIAL = Path(__file__).resolve().parent.parent / "config_history.json"
 
 
 @dataclass
@@ -127,9 +133,10 @@ def menu_interactivo() -> Optional[Configuracion]:
         print("  [3] Definir webs a simular")
         print("  [4] Elegir fuente de código")
         print("  [5] Definir tiempo (minutos)")
-        print("  [6] INICIAR BOT")
-        print("  [7] Salir")
-        opcion = _preguntar("  Opción: ", {"1", "2", "3", "4", "5", "6", "7"})
+        print("  [6] Usar configuración previa")
+        print("  [7] INICIAR BOT")
+        print("  [8] Salir")
+        opcion = _preguntar("  Opción: ", {"1", "2", "3", "4", "5", "6", "7", "8"})
 
         if opcion == "1":
             _seleccionar_editor(config)
@@ -142,12 +149,128 @@ def menu_interactivo() -> Optional[Configuracion]:
         elif opcion == "5":
             _seleccionar_tiempo(config)
         elif opcion == "6":
+            _cargar_config_previa(config)
+        elif opcion == "7":
             if not config.editor:
-                print("\n  Debes elegir un editor antes de iniciar (opción 1)")
+                print("\n  Debes elegir un editor antes de iniciar (opción 1 o 6)")
                 continue
             return config
-        elif opcion == "7":
+        elif opcion == "8":
             return None
+
+
+def _config_a_dict(config: Configuracion) -> dict:
+    """Convierte una configuración en un registro serializable para el historial."""
+    es_directorio = isinstance(config.fuente, RealProjectSource)
+    return {
+        "editor": config.editor,
+        "browser": config.browser,
+        "paginas": list(config.paginas),
+        "fuente_tipo": "directorio" if es_directorio else "aleatorio",
+        "fuente_descripcion": config.fuente_descripcion,
+        "directorio": str(config.fuente.directorio) if es_directorio else None,
+        "tiempo": config.tiempo,
+        "fecha": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+    }
+
+
+def _dict_a_config(d: dict) -> Configuracion:
+    """Reconstruye una configuración a partir de un registro del historial."""
+    if d.get("fuente_tipo") == "directorio" and d.get("directorio"):
+        try:
+            fuente = RealProjectSource(d["directorio"])
+            descripcion = str(fuente)
+        except ValueError as e:
+            logging.warning(f"No se pudo restaurar el directorio real '{d['directorio']}': {e}")
+            fuente = CodeGenerator()
+            descripcion = "Código React/TS aleatorio"
+    else:
+        fuente = CodeGenerator()
+        descripcion = d.get("fuente_descripcion", "Código React/TS aleatorio")
+
+    return Configuracion(
+        editor=d.get("editor"),
+        browser=d.get("browser"),
+        paginas=[p for p in (d.get("paginas") or []) if isinstance(p, str)],
+        fuente=fuente,
+        fuente_descripcion=descripcion,
+        tiempo=d.get("tiempo"),
+    )
+
+
+def cargar_historial() -> list:
+    """Lee las configuraciones de las últimas sesiones; crea el archivo si no existe."""
+    try:
+        if not RUTA_HISTORIAL.exists():
+            RUTA_HISTORIAL.write_text("[]", encoding="utf-8")
+            logging.info(f"Historial de configuraciones creado en {RUTA_HISTORIAL}")
+            return []
+        datos = json.loads(RUTA_HISTORIAL.read_text(encoding="utf-8"))
+        return datos if isinstance(datos, list) else []
+    except Exception as e:
+        logging.warning(f"No se pudo leer el historial de configuraciones: {e}")
+        return []
+
+
+def guardar_historial(registros: list) -> None:
+    """Guarda los registros de configuración en el archivo de historial."""
+    try:
+        RUTA_HISTORIAL.write_text(
+            json.dumps(registros, ensure_ascii=False, indent=2), encoding="utf-8"
+        )
+    except Exception as e:
+        logging.warning(f"No se pudo guardar el historial de configuraciones: {e}")
+
+
+def guardar_configuracion(config: Configuracion) -> None:
+    """Guarda la configuración usada en la sesión; conserva solo las últimas 5."""
+    registros = cargar_historial()
+    nuevo = _config_a_dict(config)
+
+    clave = {k: nuevo.get(k) for k in ("editor", "browser", "paginas", "fuente_tipo", "directorio", "tiempo")}
+    if registros:
+        clave_ultimo = {k: registros[0].get(k) for k in clave}
+        if clave_ultimo == clave:
+            return
+
+    registros.insert(0, nuevo)
+    del registros[MAX_HISTORIAL:]
+    guardar_historial(registros)
+
+
+def _cargar_config_previa(config: Configuracion) -> bool:
+    """Carga una de las configuraciones previas; la más reciente se auto-selecciona por defecto."""
+    registros = cargar_historial()
+    if not registros:
+        print("  No hay configuraciones previas guardadas")
+        return False
+
+    print("\n  Configuraciones de las últimas sesiones:")
+    for i, r in enumerate(registros, 1):
+        editor = r.get("editor") or "?"
+        browser = r.get("browser") or "ninguno"
+        webs = ", ".join(r.get("paginas") or []) or "ninguna"
+        fuente = r.get("fuente_descripcion", "?")
+        tiempo = f"{r.get('tiempo')} min" if r.get("tiempo") else "indefinido"
+        print(f"    [{i}] {editor} | {browser} | {webs} | {fuente} | {tiempo} | {r.get('fecha', '')}")
+
+    print("  (Enter = la más reciente)")
+    opcion = _preguntar(
+        f"  Selecciona una configuración [1-{len(registros)}]: ",
+        {str(i) for i in range(1, len(registros) + 1)},
+        por_defecto="1",
+    )
+    d = registros[int(opcion) - 1]
+    previa = _dict_a_config(d)
+
+    config.editor = previa.editor
+    config.browser = previa.browser
+    config.paginas = previa.paginas
+    config.fuente = previa.fuente
+    config.fuente_descripcion = previa.fuente_descripcion
+    config.tiempo = previa.tiempo
+    print("  Configuración previa cargada")
+    return True
 
 
 def configuracion_desde_args(args) -> Configuracion:

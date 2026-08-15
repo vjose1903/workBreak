@@ -2,13 +2,19 @@ import logging
 import os
 import pyautogui
 import random
+import re
 import subprocess
 import tempfile
 import time
+from typing import Optional
 
 from base_automation import BaseAutomation, FailsafeActivo
 from code_generator import CodeGenerator
 from statistics_tracker import StatisticsTracker
+
+
+class EditorNoDisponible(Exception):
+    """Excepción para cuando no se puede abrir ningún editor instalado"""
 
 
 class EditorInteractor(BaseAutomation):
@@ -19,17 +25,18 @@ class EditorInteractor(BaseAutomation):
         self.stats_tracker = stats_tracker
         self.fuente_codigo = fuente_codigo or CodeGenerator()
         self.VALID_EDITORS = ["cursor", "vsCode"]
-        self.EDITOR_STARTUP_TIME = 5
+        self.EDITOR_STARTUP_TIME = 2
         self.EDITOR_WINDOW_OFFSET = 20
         self.EDITOR_ABIERTO = False
         self.editor_actual = None
         self._portapapeles_original = None
-        self.ultimo_fragmento = None
+        self.lineas_actuales = None
+        self.bloque_actual = None
+        self.inicio_bloque = 0
+        self.indice_linea = 0
+        self.desplazamiento = 0
+        self.necesita_reposicionar = True
         self.proyecto_simulado = None
-        self.editor_commands = {
-            "vsCode": ["code"],
-            "cursor": ["cursor"] if self.is_windows else ["/Applications/Cursor.app/Contents/MacOS/Cursor"]
-        }
         self.EDITOR_INFO = {
             "vsCode": {"proceso": "Visual Studio Code", "mac": "Visual Studio Code"},
             "cursor": {"proceso": "Cursor", "mac": "Cursor"},
@@ -41,10 +48,46 @@ class EditorInteractor(BaseAutomation):
             raise ValueError(f"El editor debe ser uno de {self.VALID_EDITORS}")
         return value
 
-    def ejecutar_comando(self, cmd: list) -> None:
-        """Ejecuta el comando para abrir el editor"""
+    def _comando_abrir_editor(self, editor: str, ruta_archivo: Optional[str]) -> Optional[list]:
+        """Construye el comando para abrir el editor con el archivo indicado; None si no se soporta"""
+        if editor not in self.VALID_EDITORS:
+            return None
+        if self.is_windows:
+            binarios = {"vsCode": "code", "cursor": "cursor"}
+            cmd = [binarios[editor]]
+            if ruta_archivo:
+                cmd.append(ruta_archivo)
+            return cmd
+        if self.is_mac:
+            nombre_app = self.EDITOR_INFO[editor]["mac"]
+            cmd = ["open", "-a", nombre_app]
+            if ruta_archivo:
+                cmd.append(ruta_archivo)
+            return cmd
+        return None
+
+    def ejecutar_comando(self, cmd: list) -> bool:
+        """Ejecuta el comando para abrir el editor; True si se lanzó correctamente"""
         logging.info(f"Ejecutando comando: {cmd}")
-        subprocess.Popen(cmd, shell=self.is_windows)
+        try:
+            if self.is_windows:
+                subprocess.Popen(cmd, shell=True)
+                return True
+            resultado = subprocess.run(cmd, capture_output=True, text=True, timeout=20)
+            if resultado.returncode != 0:
+                mensaje = (resultado.stderr or resultado.stdout or "").strip()
+                logging.error(f"Error lanzando el editor ({cmd}): {mensaje}")
+                return False
+            return True
+        except FileNotFoundError:
+            logging.error(f"No se encontró el ejecutable para abrir el editor: {cmd}")
+            return False
+        except subprocess.TimeoutExpired:
+            logging.error(f"Timeout lanzando el editor: {cmd}")
+            return False
+        except Exception as e:
+            logging.error(f"Error lanzando el editor ({cmd}): {e}")
+            return False
 
     def _crear_proyecto_simulado(self) -> str:
         """Crea un proyecto React/TS simulado en un directorio temporal y devuelve su ruta"""
@@ -201,42 +244,71 @@ export default Spinner;
             return None
 
     def abrir_editor(self, editor: str) -> None:
-        """Abre el editor una única vez por ejecución apuntando al proyecto simulado"""
+        """Abre el editor una única vez por ejecución apuntando al proyecto simulado.
+
+        Si el editor elegido no está instalado, intenta con los demás editores válidos;
+        si ninguno funciona, lanza EditorNoDisponible.
+        """
         if self.EDITOR_ABIERTO:
             return
 
         try:
             ruta_proyecto = self._crear_proyecto_simulado()
-            cmd = list(self.editor_commands[editor])
-            if ruta_proyecto:
-                cmd.append(os.path.join(ruta_proyecto, "src", "App.tsx"))
-            else:
-                logging.warning("Proyecto simulado no disponible; abriendo el editor sin argumento")
+            ruta_archivo = os.path.join(ruta_proyecto, "src", "App.tsx") if ruta_proyecto else None
 
-            self.ejecutar_comando(cmd)
-            logging.info(f"Abriendo editor: {editor}")
-            time.sleep(self.EDITOR_STARTUP_TIME)
+            efectivo = self._lanzar_editor_primero_disponible(editor, ruta_archivo)
+            if efectivo is None:
+                raise EditorNoDisponible(
+                    f"No se pudo abrir ningún editor instalado. "
+                    f"Disponibles: {', '.join(self.EDITOR_INFO)} (instala Cursor o VS Code)"
+                )
 
-            info = self.EDITOR_INFO[editor]
-            if not self.activar_aplicacion(info["proceso"], info["mac"]):
+            info = self.EDITOR_INFO[efectivo]
+            if not self._esperar_ventana_editor(info):
                 logging.warning("No se pudo activar la ventana del editor; fallback a mover el cursor")
                 self.move_cursor_to_center()
             time.sleep(1)
 
-            self.editor_actual = editor
+            self.editor_actual = efectivo
             self.EDITOR_ABIERTO = True
+        except EditorNoDisponible:
+            raise
         except Exception as e:
             self.manejar_error(f"Error al abrir el editor {editor}: {e}")
 
+    def _lanzar_editor_primero_disponible(self, editor: str, ruta_archivo: Optional[str]) -> Optional[str]:
+        """Intenta lanzar el editor pedido y luego los demás; devuelve el efectivo o None"""
+        candidatos = [editor] + [e for e in self.VALID_EDITORS if e != editor]
+        for e in candidatos:
+            cmd = self._comando_abrir_editor(e, ruta_archivo)
+            if not cmd:
+                continue
+            logging.info(f"Abriendo editor: {e}")
+            if self.ejecutar_comando(cmd):
+                return e
+            logging.warning(f"El editor '{e}' no pudo abrirse; se intenta con el siguiente")
+        return None
+
+    def _esperar_ventana_editor(self, info: dict) -> bool:
+        """Espera (reintentando) a que la ventana del editor esté disponible y la activa"""
+        limite = time.monotonic() + self.EDITOR_STARTUP_TIME
+        while time.monotonic() < limite:
+            if self.activar_aplicacion(info["proceso"], info["mac"]):
+                return True
+            time.sleep(0.5)
+        return False
+
     def asegurar_editor_abierto(self, editor: str) -> None:
-        """Asegura que el editor esté abierto y enfocado sin relanzarlo cada ciclo"""
-        self.editor_actual = editor
+        """Asegura que el editor esté abierto y enfocado sin relanzarlo cada ciclo.
+
+        Una vez abierto, usa el editor efectivo (el que realmente se pudo lanzar).
+        """
         if not self.EDITOR_ABIERTO:
             self.abrir_editor(editor)
             return
 
-        info = self.EDITOR_INFO[editor]
-        self.activar_aplicacion(info["proceso"], info["mac"])
+        info = self.EDITOR_INFO[self.editor_actual]
+        self._activar_si_necesario(info["proceso"], info["mac"])
         time.sleep(1)
 
     def manejar_error(self, mensaje: str) -> None:
@@ -244,8 +316,11 @@ export default Spinner;
         logging.error(mensaje)
         raise RuntimeError(mensaje)
 
-    def interactuar_editor(self) -> None:
-        """Inyecta código una vez y alterna fases de escritura y mouse con duraciones variables"""
+    def interactuar_editor(self, duracion_maxima: Optional[float] = None) -> None:
+        """Inyecta código una vez y alterna fases de escritura y mouse con duraciones variables.
+
+        `duracion_maxima` limita el turno actual (usado al alternar con el navegador).
+        """
         tiempo_inicio = time.time()
         tiempo_restante = self.tiempo_restante()
 
@@ -257,6 +332,9 @@ export default Spinner;
             duracion = random.uniform(60, 240)
         else:
             duracion = min(random.uniform(60, 240), tiempo_restante)
+
+        if duracion_maxima is not None:
+            duracion = min(duracion, duracion_maxima)
 
         tiempo_final = time.monotonic() + duracion
 
@@ -280,44 +358,133 @@ export default Spinner;
             raise
 
     def fase_escritura(self, tiempo_final: float) -> None:
-        """Fase de escritura con duración variable: escribe y borra fragmentos solo al final del archivo"""
+        """Fase de escritura con duración variable: borra y reescribe bloques reales de código"""
         duracion = self._duracion_fase_escritura()
         fin = min(time.monotonic() + duracion, tiempo_final)
         logging.info(f"Fase de escritura por {max(0.0, fin - time.monotonic()):.0f}s")
 
         if self.editor_actual:
             info = self.EDITOR_INFO[self.editor_actual]
-            self.activar_aplicacion(info["proceso"], info["mac"])
+            self._activar_si_necesario(info["proceso"], info["mac"])
 
         while time.monotonic() < fin:
             if not self._queda_tiempo_editor(tiempo_final):
                 break
-            self._escribir_y_borrar_fragmento()
-            time.sleep(random.uniform(0.3, 1.5))
-
-        if self._queda_tiempo_editor(tiempo_final):
-            self._escribir_fragmento_al_final()
+            self._editar_bloque_real(tiempo_final)
+            time.sleep(random.uniform(0.4, 1.8))
 
     def fase_mouse(self, tiempo_final: float) -> None:
-        """Fase de mouse con duración variable: mueve el cursor, hace scroll y clics sin dañar el código"""
+        """Fase de mouse: sube al inicio del archivo, hace clic y scroll arriba/abajo para que las
+        capturas muestren el código; al terminar vuelve a la línea donde continuará la escritura"""
         duracion = self._duracion_fase_mouse()
         fin = min(time.monotonic() + duracion, tiempo_final)
         logging.info(f"Fase de mouse por {max(0.0, fin - time.monotonic()):.0f}s")
 
+        if self.editor_actual:
+            info = self.EDITOR_INFO[self.editor_actual]
+            self._activar_si_necesario(info["proceso"], info["mac"])
+
+        self.necesita_reposicionar = True
+        self._iniciar_fase_mouse()
+
         while time.monotonic() < fin:
             if not self._queda_tiempo_editor(tiempo_final):
                 break
+            self._movimiento_fase_mouse()
+            time.sleep(random.uniform(0.4, 2.0))
+
+        self._volver_a_escritura_pendiente()
+
+    def _iniciar_fase_mouse(self) -> None:
+        """Sube al inicio del archivo y hace clic sobre el editor para enfocarlo"""
+        try:
+            pyautogui.hotkey("ctrl", "home")
+            time.sleep(random.uniform(0.2, 0.5))
+            rect = self._rectangulo_ventana_editor()
+            if rect:
+                x, y, ancho, alto = rect
+                pyautogui.moveTo(x + ancho // 3, y + max(120, alto // 3),
+                                 duration=random.uniform(0.2, 0.6))
+            else:
+                pyautogui.moveRel(random.randint(10, 40), random.randint(10, 40),
+                                  duration=random.uniform(0.2, 0.6))
+            pyautogui.click()
+            time.sleep(random.uniform(0.2, 0.5))
+        except pyautogui.FailSafeException:
+            raise
+        except Exception as e:
+            logging.warning(f"No se pudo iniciar la fase de mouse: {e}")
+
+    def _movimiento_fase_mouse(self) -> None:
+        """Movimiento individual de la fase: scroll abajo/arriba (mayormente) y pequeños movimientos"""
+        r = random.random()
+        if r < 0.1:
+            pyautogui.hotkey("ctrl", "home")
+            time.sleep(0.1)
+        elif r < 0.7:
+            pyautogui.scroll(-random.randint(4, 12))
+        elif r < 0.85:
+            pyautogui.scroll(random.randint(3, 8))
+        else:
             x = random.randint(-self.EDITOR_WINDOW_OFFSET, self.EDITOR_WINDOW_OFFSET)
             y = random.randint(-self.EDITOR_WINDOW_OFFSET, self.EDITOR_WINDOW_OFFSET)
             pyautogui.moveRel(x, y, duration=random.uniform(0.2, 0.6))
-
-            if random.random() < 0.4:
-                pyautogui.scroll(random.randint(-6, 6))
-
-            if random.random() < 0.25:
+            if random.random() < 0.5:
                 pyautogui.click()
 
-            time.sleep(random.uniform(0.4, 2.0))
+    def _volver_a_escritura_pendiente(self) -> None:
+        """Al terminar la fase de mouse, vuelve a la línea donde continuará la escritura"""
+        if not self.bloque_actual or self.indice_linea >= len(self.bloque_actual):
+            return
+        try:
+            self._ir_a_linea(self.inicio_bloque + self.indice_linea + 1)
+            time.sleep(random.uniform(0.1, 0.3))
+            if self.desplazamiento > 0:
+                pyautogui.press("end")
+                time.sleep(random.uniform(0.05, 0.15))
+            self.necesita_reposicionar = False
+        except pyautogui.FailSafeException:
+            raise
+        except Exception as e:
+            logging.warning(f"No se pudo volver a la línea de escritura pendiente: {e}")
+            self.necesita_reposicionar = True
+
+    def _rectangulo_ventana_editor(self):
+        """Devuelve (x, y, ancho, alto) de la ventana del editor o None si no se puede obtener"""
+        if not self.editor_actual:
+            return None
+        info = self.EDITOR_INFO[self.editor_actual]
+        try:
+            if self.is_windows:
+                import pygetwindow as gw
+                ventanas = gw.getWindowsWithTitle(info["proceso"])
+                if not ventanas:
+                    return None
+                ventana = ventanas[0]
+                return (ventana.left, ventana.top, ventana.width, ventana.height)
+            if self.is_mac:
+                resultado = subprocess.run(
+                    ["osascript", "-e",
+                     f'tell application "System Events" to tell process "{info["mac"]}" to get {{position, size}} of window 1'],
+                    capture_output=True, text=True, timeout=5
+                )
+                if resultado.returncode != 0 or not resultado.stdout.strip():
+                    return None
+                numeros = re.findall(r"-?\d+", resultado.stdout)
+                if len(numeros) >= 4:
+                    x, y, ancho, alto = (int(v) for v in numeros[:4])
+                    return (x, y, ancho, alto)
+        except Exception as e:
+            logging.warning(f"No se pudo obtener el rectángulo de la ventana: {e}")
+        return None
+
+    def _liberar_modificadores(self) -> None:
+        """Suelta cualquier modificador que pyautogui haya dejado 'pegado' (evita emojis/acciones raras)"""
+        for tecla in ("ctrl", "command", "shift", "option"):
+            try:
+                pyautogui.keyUp(tecla)
+            except Exception:
+                pass
 
     def _duracion_fase_escritura(self) -> float:
         """Duración aleatoria de la fase de escritura (corta, media, larga)"""
@@ -336,38 +503,142 @@ export default Spinner;
             random.uniform(10, 16),
         ])
 
-    def _escribir_y_borrar_fragmento(self) -> None:
-        """Escribe un fragmento aleatorio al final del archivo y luego borra solo ese fragmento"""
-        self._ir_al_final_del_archivo()
-        fragmento = self.generar_texto_aleatorio(random.randint(4, 18))
-        pyautogui.write(fragmento, interval=random.uniform(0.03, 0.12))
-        self.ultimo_fragmento = fragmento
-        time.sleep(random.uniform(0.4, 1.4))
-        self._borrar_ultimo_fragmento()
-
-    def _escribir_fragmento_al_final(self) -> None:
-        """Deja un fragmento visible al final del archivo para que se note actividad de escritura"""
-        self._ir_al_final_del_archivo()
-        fragmento = self.generar_texto_aleatorio(random.randint(4, 14))
-        pyautogui.write(fragmento, interval=random.uniform(0.03, 0.12))
-        self.ultimo_fragmento = fragmento
-
-    def _borrar_ultimo_fragmento(self) -> None:
-        """Borra únicamente el último fragmento aleatorio escrito (no toca el código)"""
-        if not self.ultimo_fragmento:
+    def _editar_bloque_real(self, tiempo_final: float) -> None:
+        """Edita el bloque en curso o toma uno nuevo; continúa donde quedó la última iteración"""
+        if not self.lineas_actuales:
             return
-        self._ir_al_final_del_archivo()
-        pyautogui.press("backspace", presses=len(self.ultimo_fragmento),
-                        interval=random.uniform(0.02, 0.08))
-        self.ultimo_fragmento = None
 
-    def _ir_al_final_del_archivo(self) -> None:
-        """Mueve el cursor al final del archivo para que la escritura nunca dañe el código"""
-        if self.is_windows:
-            pyautogui.hotkey("ctrl", "end")
+        try:
+            self._cerrar_paneles()
+
+            if self.bloque_actual is None or self.indice_linea >= len(self.bloque_actual):
+                inicio, bloque = self._elegir_bloque()
+                if not bloque:
+                    return
+                self.bloque_actual = bloque
+                self.inicio_bloque = inicio
+                self.indice_linea = 0
+                self.desplazamiento = 0
+                n = len(bloque)
+                logging.info(f"Nuevo bloque: líneas {inicio + 1} a {inicio + n} ({n} líneas)")
+                self._preparar_bloque_para_escribir()
+            elif self.necesita_reposicionar:
+                self._ir_a_linea(self.inicio_bloque + self.indice_linea + 1)
+                time.sleep(random.uniform(0.1, 0.3))
+                self.necesita_reposicionar = False
+
+            self._escribir_siguiente_linea(tiempo_final)
+        except pyautogui.FailSafeException:
+            raise
+        except Exception:
+            logging.exception("Error editando bloque real; se continúa con la siguiente iteración")
+
+    def _preparar_bloque_para_escribir(self) -> None:
+        """Salta al bloque, lo selecciona y lo borra, dejando el cursor listo para escribir"""
+        n = len(self.bloque_actual)
+        self.necesita_reposicionar = False
+        self._ir_a_linea(self.inicio_bloque + 1)
+        time.sleep(random.uniform(0.1, 0.3))
+        pyautogui.keyDown("shift")
+        try:
+            pyautogui.press("down", presses=n, interval=random.uniform(0.02, 0.05))
+        finally:
+            pyautogui.keyUp("shift")
+        time.sleep(random.uniform(0.05, 0.15))
+        pyautogui.press("backspace")
+        time.sleep(random.uniform(0.05, 0.15))
+        pyautogui.press("enter")
+        time.sleep(random.uniform(0.05, 0.15))
+        self._liberar_modificadores()
+
+    def _escribir_siguiente_linea(self, tiempo_final: float) -> None:
+        """Escribe la línea en curso; si quedó a medias, continúa desde donde se interrumpió"""
+        linea = self.bloque_actual[self.indice_linea]
+
+        if self.desplazamiento == 0:
+            self._limpiar_linea_actual()
         else:
-            pyautogui.hotkey("command", "down")
-        time.sleep(0.05)
+            pyautogui.press("end")
+            time.sleep(random.uniform(0.05, 0.15))
+
+        texto = linea[self.desplazamiento:]
+        for c in texto:
+            if not self._queda_tiempo_editor(tiempo_final):
+                return
+            pyautogui.write(c, interval=0)
+            time.sleep(random.uniform(0.03, 0.08))
+            self.desplazamiento += 1
+
+        if self.indice_linea < len(self.bloque_actual) - 1:
+            pyautogui.press("enter")
+            time.sleep(random.uniform(0.1, 0.4))
+        self.indice_linea += 1
+        self.desplazamiento = 0
+
+    def _max_bloque_segun_tamano(self) -> int:
+        """Tamaño máximo del bloque según el tamaño del archivo para no borrarlo entero"""
+        n = len(self.lineas_actuales)
+        if n < 40:
+            return random.randint(1, 2)
+        if n < 80:
+            return random.randint(1, 3)
+        if n < 150:
+            return random.randint(1, 4)
+        return random.randint(1, 6)
+
+    def _elegir_bloque(self) -> tuple:
+        """Elige un bloque contiguo de líneas reales que se pueda reescribir con el teclado"""
+        lineas = self.lineas_actuales
+
+        if len(lineas) < 2:
+            for idx, linea in enumerate(lineas):
+                if self._linea_escribible(linea):
+                    return idx, [linea]
+            return 0, []
+
+        for _ in range(25):
+            inicio = random.randrange(len(lineas) - 1)
+            if not self._linea_escribible(lineas[inicio]) or len(lineas[inicio]) > 160:
+                continue
+            max_bloque = self._max_bloque_segun_tamano()
+            bloque = [lineas[inicio]]
+            for idx in range(inicio + 1, len(lineas) - 1):
+                if len(bloque) >= max_bloque:
+                    break
+                if not self._linea_escribible(lineas[idx]) or len(lineas[idx]) > 160:
+                    break
+                bloque.append(lineas[idx])
+            if any(l.strip() for l in bloque):
+                return inicio, bloque
+
+        return 0, []
+
+    def _linea_escribible(self, linea: str) -> bool:
+        """Indica si la línea puede reescribirse con pyautogui (solo ASCII imprimible, sin tabulaciones)"""
+        return all(0x20 <= ord(c) <= 0x7E for c in linea)
+
+    def _limpiar_linea_actual(self) -> None:
+        """Borra cualquier sangría automática del editor y deja el cursor en la columna 0"""
+        pyautogui.press("end")
+        pyautogui.hotkey(self.cmd_key, "shift", "left")
+        pyautogui.press("backspace")
+        self._liberar_modificadores()
+
+    def _cerrar_paneles(self) -> None:
+        """Cierra con Escape cualquier panel emergente (autocompletado, emojis, quick input)"""
+        pyautogui.press("esc")
+        time.sleep(0.1)
+
+    def _ir_a_linea(self, numero: int) -> None:
+        """Salta a la línea indicada usando el diálogo 'Ir a línea' del editor (Ctrl+G)"""
+        pyautogui.hotkey("ctrl", "g")
+        time.sleep(0.15)
+        pyautogui.hotkey(self.cmd_key, "a")
+        pyautogui.write(str(numero), interval=0.03)
+        time.sleep(0.1)
+        pyautogui.press("enter")
+        time.sleep(0.1)
+        self._liberar_modificadores()
 
     def _queda_tiempo_editor(self, tiempo_final: float) -> bool:
         """Indica si queda tiempo (duración de la fase y límite global)"""
@@ -395,15 +666,21 @@ export default Spinner;
 
         if self.editor_actual:
             info = self.EDITOR_INFO[self.editor_actual]
-            self.activar_aplicacion(info["proceso"], info["mac"])
+            self._activar_si_necesario(info["proceso"], info["mac"])
 
         pyautogui.hotkey(self.cmd_key, 'a')
         time.sleep(0.15)
         pyautogui.hotkey(self.cmd_key, 'v')
         time.sleep(0.3)
+        self._liberar_modificadores()
 
-        lineas = len(codigo.splitlines())
-        logging.info(f"Código inyectado: {lineas} líneas, {len(codigo)} caracteres")
+        self.lineas_actuales = codigo.splitlines()
+        self.bloque_actual = None
+        self.inicio_bloque = 0
+        self.indice_linea = 0
+        self.desplazamiento = 0
+        self.necesita_reposicionar = True
+        logging.info(f"Código inyectado: {len(self.lineas_actuales)} líneas, {len(codigo)} caracteres")
 
     def restaurar_portapapeles(self) -> None:
         """Restaura el portapapeles del usuario al valor guardado en la primera inyección"""

@@ -19,6 +19,12 @@ class FailsafeActivo(Exception):
 
 
 class BaseAutomation:
+    # Cache compartida entre instancias (EditorInteractor y WebInteractor) para
+    # evitar activar la misma aplicación repetidamente (osascript es lento ~0.7-0.9s)
+    _app_frontmost: Optional[str] = None
+    _app_frontmost_ts: float = 0.0
+    _ACTIVACION_TTL = 8.0
+
     def __init__(self):
         pyautogui.FAILSAFE = True
         pyautogui.PAUSE = 0.05
@@ -65,14 +71,28 @@ class BaseAutomation:
         """Trae al frente la aplicación (por proceso en Windows, por app en macOS)"""
         try:
             if self.is_windows:
-                return self._activar_aplicacion_windows(nombre_proceso)
-            if self.is_mac:
-                return self._activar_aplicacion_mac(nombre_mac)
-            logging.warning("Sistema operativo no soportado para activar aplicaciones")
-            return False
+                exito = self._activar_aplicacion_windows(nombre_proceso)
+            elif self.is_mac:
+                exito = self._activar_aplicacion_mac(nombre_mac)
+            else:
+                logging.warning("Sistema operativo no soportado para activar aplicaciones")
+                return False
         except Exception as e:
             logging.error(f"Error activando la aplicación '{nombre_proceso or nombre_mac}': {e}")
             return False
+
+        if exito:
+            BaseAutomation._app_frontmost = nombre_proceso or nombre_mac
+            BaseAutomation._app_frontmost_ts = time.monotonic()
+        return exito
+
+    def _activar_si_necesario(self, nombre_proceso: str, nombre_mac: str) -> bool:
+        """Activa la app solo si no es la que ya está al frente recientemente (evita osascript innecesarios)"""
+        clave = nombre_proceso or nombre_mac
+        if (BaseAutomation._app_frontmost == clave
+                and time.monotonic() - BaseAutomation._app_frontmost_ts < BaseAutomation._ACTIVACION_TTL):
+            return True
+        return self.activar_aplicacion(nombre_proceso, nombre_mac)
 
     def _activar_aplicacion_mac(self, nombre_mac: str) -> bool:
         """Activa la app en macOS vía System Events, con fallback a 'activate'"""

@@ -1,13 +1,15 @@
 import argparse
 import logging
+import random
 import time
 from typing import Optional
 
 import pyautogui
 
 from base_automation import FailsafeActivo
-from editor_interactor import EditorInteractor
-from menu import Configuracion, configuracion_desde_args, menu_interactivo
+from editor_interactor import EditorInteractor, EditorNoDisponible
+from menu import (Configuracion, configuracion_desde_args, guardar_configuracion,
+                  menu_interactivo)
 from web_interactor import WebInteractor
 from statistics_tracker import StatisticsTracker
 
@@ -81,6 +83,10 @@ class AutomationBot:
                     logging.warning("Failsafe activado (mouse en esquina); deteniendo el bot")
                     codigo_salida = 2
                     break
+                except EditorNoDisponible as e:
+                    logging.error(str(e))
+                    codigo_salida = 1
+                    break
                 except KeyboardInterrupt:
                     logging.info("Programa terminado por el usuario (Ctrl+C)")
                     codigo_salida = 130
@@ -125,12 +131,19 @@ class AutomationBot:
         return codigo_salida
 
     def ejecutar_tareas(self, editor: str, paginas: list):
-        """Ejecuta las tareas principales: asegurar editor, interactuar y navegar por la web"""
+        """Ejecuta las tareas principales: asegurar el editor y alternar editor/navegador.
+
+        Si hay webs configuradas, las fases del editor y del navegador se alternan en
+        turnos acotados para que ambas arranquen apenas su aplicación está abierta,
+        en lugar de esperar a que termine toda la fase del editor.
+        """
         self.editor_interactor.asegurar_editor_abierto(editor)
-        self.editor_interactor.interactuar_editor()
 
         if paginas:
-            self.web_interactor.interactuar_web()
+            self.editor_interactor.interactuar_editor(duracion_maxima=random.uniform(30, 90))
+            self.web_interactor.interactuar_web(duracion_maxima=random.uniform(30, 60))
+        else:
+            self.editor_interactor.interactuar_editor()
 
     def ejecutar(self) -> int:
         """Si se pasa el editor por CLI usa la configuración de args; si no, muestra el menú interactivo"""
@@ -146,4 +159,5 @@ class AutomationBot:
             logging.info("Salida por menú; el bot no se ejecutó")
             return 0
 
+        guardar_configuracion(config)
         return self.gestionar_ejecucion(config)
