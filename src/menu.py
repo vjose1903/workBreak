@@ -11,6 +11,11 @@ from code_source import RealProjectSource
 NAVEGADORES_VALIDOS = ["chrome", "edge", "opera", "firefox"]
 NAVEGADOR_NINGUNO = {"ninguno", "none", "no", "0", ""}
 MAX_HISTORIAL = 5
+FASES_EDITOR = {
+    "ambas": "Escritura y mouse",
+    "escritura": "Solo escritura",
+    "mouse": "Solo mouse",
+}
 
 RUTA_HISTORIAL = Path(__file__).resolve().parent.parent / "config_history.json"
 
@@ -24,10 +29,13 @@ class Configuracion:
     fuente: Any = None
     fuente_descripcion: str = "Código React/TS aleatorio"
     tiempo: Optional[int] = None
+    fases: str = "ambas"
 
     def __post_init__(self):
         if self.fuente is None:
             self.fuente = CodeGenerator()
+        if self.fases not in FASES_EDITOR:
+            self.fases = "ambas"
 
     def resumen(self) -> str:
         tiempo_str = f"{self.tiempo} min" if self.tiempo else "indefinido"
@@ -36,6 +44,7 @@ class Configuracion:
             f"  Navegador     : {self.browser or 'ninguno'}\n"
             f"  Webs          : {', '.join(self.paginas) if self.paginas else 'ninguna'}\n"
             f"  Fuente código : {self.fuente_descripcion}\n"
+            f"  Fases editor  : {FASES_EDITOR[self.fases]}\n"
             f"  Tiempo        : {tiempo_str}"
         )
 
@@ -108,6 +117,15 @@ def _seleccionar_tiempo(config: Configuracion) -> None:
     config.tiempo = tiempo if tiempo > 0 else None
 
 
+def _seleccionar_fases(config: Configuracion) -> None:
+    print("\n  Fases del editor:")
+    print("    1 = Escritura y mouse")
+    print("    2 = Solo escritura")
+    print("    3 = Solo mouse")
+    opcion = _preguntar("  Opción: ", {"1", "2", "3"})
+    config.fases = {"1": "ambas", "2": "escritura", "3": "mouse"}[opcion]
+
+
 def menu_interactivo() -> Optional[Configuracion]:
     """Presenta el menú interactivo de configuración; devuelve None si el usuario sale."""
     print("=" * 60)
@@ -126,9 +144,10 @@ def menu_interactivo() -> Optional[Configuracion]:
         print("  [3] Elegir fuente de código")
         print("  [4] Definir tiempo (minutos)")
         print("  [5] Usar configuración previa")
-        print("  [6] INICIAR BOT")
-        print("  [7] Salir")
-        opcion = _preguntar("  Opción: ", {"1", "2", "3", "4", "5", "6", "7"})
+        print("  [6] Elegir fases del editor")
+        print("  [7] INICIAR BOT")
+        print("  [8] Salir")
+        opcion = _preguntar("  Opción: ", {"1", "2", "3", "4", "5", "6", "7", "8"})
 
         if opcion == "1":
             _seleccionar_navegador(config)
@@ -141,8 +160,10 @@ def menu_interactivo() -> Optional[Configuracion]:
         elif opcion == "5":
             _cargar_config_previa(config)
         elif opcion == "6":
-            return config
+            _seleccionar_fases(config)
         elif opcion == "7":
+            return config
+        elif opcion == "8":
             return None
 
 
@@ -157,6 +178,7 @@ def _config_a_dict(config: Configuracion) -> dict:
         "fuente_descripcion": config.fuente_descripcion,
         "directorio": str(config.fuente.directorio) if es_directorio else None,
         "tiempo": config.tiempo,
+        "fases": config.fases,
         "fecha": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
     }
 
@@ -181,6 +203,7 @@ def _dict_a_config(d: dict) -> Configuracion:
         fuente=fuente,
         fuente_descripcion=descripcion,
         tiempo=d.get("tiempo"),
+        fases=d.get("fases", "ambas"),
     )
 
 
@@ -213,7 +236,7 @@ def guardar_configuracion(config: Configuracion) -> None:
     registros = cargar_historial()
     nuevo = _config_a_dict(config)
 
-    clave = {k: nuevo.get(k) for k in ("editor", "browser", "paginas", "fuente_tipo", "directorio", "tiempo")}
+    clave = {k: nuevo.get(k) for k in ("editor", "browser", "paginas", "fuente_tipo", "directorio", "tiempo", "fases")}
     if registros:
         clave_ultimo = {k: registros[0].get(k) for k in clave}
         if clave_ultimo == clave:
@@ -238,7 +261,8 @@ def _cargar_config_previa(config: Configuracion) -> bool:
         webs = ", ".join(r.get("paginas") or []) or "ninguna"
         fuente = r.get("fuente_descripcion", "?")
         tiempo = f"{r.get('tiempo')} min" if r.get("tiempo") else "indefinido"
-        print(f"    [{i}] {editor} | {browser} | {webs} | {fuente} | {tiempo} | {r.get('fecha', '')}")
+        fases = FASES_EDITOR.get(r.get("fases"), FASES_EDITOR["ambas"])
+        print(f"    [{i}] {editor} | {browser} | {webs} | {fuente} | {fases} | {tiempo} | {r.get('fecha', '')}")
 
     print("  (Enter = la más reciente)")
     opcion = _preguntar(
@@ -254,6 +278,7 @@ def _cargar_config_previa(config: Configuracion) -> bool:
     config.fuente = previa.fuente
     config.fuente_descripcion = previa.fuente_descripcion
     config.tiempo = previa.tiempo
+    config.fases = previa.fases
     print("  Configuración previa cargada")
     return True
 

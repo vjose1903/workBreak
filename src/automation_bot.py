@@ -53,6 +53,7 @@ class AutomationBot:
 
     def gestionar_ejecucion(self, config: Configuracion) -> int:
         """Gestiona la ejecución del bot con resiliencia; devuelve el código de salida"""
+        self.editor_interactor.fases = config.fases
         if config.fuente:
             self.editor_interactor.fuente_codigo = config.fuente
 

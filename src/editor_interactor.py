@@ -32,6 +32,7 @@ class EditorInteractor(BaseAutomation):
         self.editor_actual = None
         self._portapapeles_original = None
         self.lineas_actuales = None
+        self.fases = "ambas"
         self.bloque_actual = None
         self.inicio_bloque = 0
         self.indice_linea = 0
@@ -239,8 +240,10 @@ class EditorInteractor(BaseAutomation):
                     return
 
             while time.monotonic() < tiempo_final:
-                self.fase_escritura(tiempo_final)
-                self.fase_mouse(tiempo_final)
+                if self.fases in ("ambas", "escritura"):
+                    self.fase_escritura(tiempo_final)
+                if self.fases in ("ambas", "mouse"):
+                    self.fase_mouse(tiempo_final)
 
             self.registrar_tiempo_interaccion(tiempo_inicio)
         except pyautogui.FailSafeException:

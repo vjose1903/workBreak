@@ -46,6 +46,19 @@ class AutomationSafetyTest(unittest.TestCase):
             self.assertFalse(self.editor._activar_si_necesario('Code.exe', 'Visual Studio Code'))
         self.assertEqual(activar.call_count, 2)
 
+    def test_editor_ejecuta_solo_las_fases_seleccionadas(self):
+        for modo, escritura, mouse in [('ambas', 1, 1), ('escritura', 1, 0), ('mouse', 0, 1)]:
+            with self.subTest(modo=modo):
+                self.editor.fases = modo
+                self.editor.lineas_actuales = ['codigo cargado']
+                with patch.object(self.editor, 'tiempo_restante', return_value=None), \
+                        patch('editor_interactor.time.monotonic', side_effect=[0, 0, 2]), \
+                        patch.object(self.editor, 'fase_escritura') as escribir, \
+                        patch.object(self.editor, 'fase_mouse') as mover:
+                    self.editor.interactuar_editor(duracion_maxima=1)
+                self.assertEqual(escribir.call_count, escritura)
+                self.assertEqual(mover.call_count, mouse)
+
     def test_inyeccion_cancelada_si_falla_activacion(self):
         self.editor.editor_actual = 'vsCode'
         self.editor.ruta_archivo = '/tmp/workbreak_unico.tsx'
