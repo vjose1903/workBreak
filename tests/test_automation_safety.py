@@ -21,6 +21,8 @@ with patch.dict(sys.modules, {'pyautogui': teclado}):
     from statistics_tracker import StatisticsTracker
     from web_interactor import WebInteractor
 
+from user_activity import MonitorActividad, PausaPorActividad
+
 
 class AutomationSafetyTest(unittest.TestCase):
     def setUp(self):
@@ -45,6 +47,49 @@ class AutomationSafetyTest(unittest.TestCase):
             self.assertFalse(self.editor._activar_si_necesario('Code.exe', 'Visual Studio Code'))
             self.assertFalse(self.editor._activar_si_necesario('Code.exe', 'Visual Studio Code'))
         self.assertEqual(activar.call_count, 2)
+
+    def test_actividad_impide_teclas_clicks_scroll_y_activar_ventanas(self):
+        monitor = MonitorActividad()
+        self.editor.monitor_actividad = monitor
+        self.web.monitor_actividad = monitor
+        monitor.registrar()
+        for accion in (lambda: self.editor._write('x'), self.editor._click,
+                       lambda: self.editor._scroll(3),
+                       lambda: self.web._hotkey('command', 't'),
+                       lambda: self.editor.activar_aplicacion('Code.exe', 'Visual Studio Code')):
+            with self.assertRaises(PausaPorActividad):
+                accion()
+        teclado.write.assert_not_called()
+        teclado.click.assert_not_called()
+        teclado.scroll.assert_not_called()
+        teclado.hotkey.assert_not_called()
+
+    def test_actividad_interrumpe_movimiento_animado_del_mouse(self):
+        monitor = MonitorActividad()
+        self.editor.monitor_actividad = monitor
+        teclado.position.return_value = (100, 100)
+        with patch.object(teclado, 'moveTo', side_effect=lambda *_args, **_kwargs: monitor.registrar()):
+            with self.assertRaises(PausaPorActividad):
+                self.editor._move_to(200, 200, duration=0.5)
+            self.assertEqual(teclado.moveTo.call_count, 1)
+
+    def test_pausa_no_cierra_pestanas_del_usuario(self):
+        with patch.object(self.web, 'activar_navegador', return_value=True), \
+                patch.object(self.web, 'copiar_al_portapapeles', side_effect=PausaPorActividad):
+            with self.assertRaises(PausaPorActividad):
+                self.web._procesar_pagina('https://example.com')
+        self.assertEqual(teclado.hotkey.call_args_list,
+                         [unittest.mock.call(self.web.cmd_key, 't')])
+
+    def test_pausa_tras_caracter_conserva_el_desplazamiento(self):
+        self.editor.bloque_actual = ['abc']
+        self.editor.necesita_reposicionar = False
+        with patch.object(self.editor, '_limpiar_linea_actual'), \
+                patch.object(self.editor, '_queda_tiempo_editor', return_value=True), \
+                patch.object(self.editor, '_esperar', side_effect=PausaPorActividad):
+            with self.assertRaises(PausaPorActividad):
+                self.editor._escribir_siguiente_linea(float('inf'))
+        self.assertEqual(self.editor.desplazamiento, 1)
 
     def test_editor_ejecuta_solo_las_fases_seleccionadas(self):
         for modo, escritura, mouse in [('ambas', 1, 1), ('escritura', 1, 0), ('mouse', 0, 1)]:

@@ -4,6 +4,8 @@ import sys
 import unittest
 from unittest.mock import MagicMock, patch
 
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent / 'src'))
+
 
 class MacKeyboardTest(unittest.TestCase):
     def setUp(self):
@@ -42,6 +44,13 @@ class MacKeyboardTest(unittest.TestCase):
         with self.assertRaisesRegex(RuntimeError, 'parada'):
             self.teclado.write('e')
         self.quartz.CGEventPost.assert_not_called()
+
+    def test_pausa_se_consulta_antes_de_cada_caracter(self):
+        from user_activity import PausaPorActividad
+        self.teclado.antes_evento = MagicMock(side_effect=[None, PausaPorActividad()])
+        with self.assertRaises(PausaPorActividad):
+            self.teclado.write('ab')
+        self.assertEqual(self.quartz.CGEventPost.call_count, 2)  # Solo down/up de la primera letra.
 
 
 if __name__ == '__main__':

@@ -6,6 +6,7 @@ import random
 from typing import Optional
 from base_automation import BaseAutomation, FailsafeActivo
 from statistics_tracker import StatisticsTracker
+from user_activity import PausaPorActividad
 
 
 class WebInteractor(BaseAutomation):
@@ -66,7 +67,7 @@ class WebInteractor(BaseAutomation):
                 while self._queda_tiempo(limite):
                     if self.activar_aplicacion(config['win'], config['mac']):
                         return True
-                    time.sleep(0.2)
+                    self._esperar(0.2)
 
             logging.warning(f"Navegador {self.browser} no disponible y ya se intentó lanzar antes")
             return False
@@ -76,13 +77,14 @@ class WebInteractor(BaseAutomation):
 
     def _lanzar_navegador(self, config) -> None:
         """Lanza el navegador la primera vez que no está abierto (sin matar nada)"""
+        self._antes_accion()
         if self.is_mac:
             subprocess.run(config['cmd'], check=True)
             logging.info(f"Navegador {self.browser} lanzado (macOS)")
         elif self.is_windows:
             subprocess.Popen(config['win'], shell=True)
             logging.info(f"Navegador {self.browser} lanzado (Windows)")
-        time.sleep(1)
+        self._esperar(1)
 
     def interactuar_web(self, duracion_maxima: Optional[float] = None) -> None:
         """Navega por las páginas y las interactúa.
@@ -123,7 +125,7 @@ class WebInteractor(BaseAutomation):
 
             self._hotkey(self.cmd_key, 't')  # Pestaña nueva
             pagina_abierta = True
-            time.sleep(0.4)
+            self._esperar(0.4)
 
             if not self._queda_tiempo(tiempo_final):
                 return
@@ -138,11 +140,11 @@ class WebInteractor(BaseAutomation):
                 return
             self._press('return')
             logging.info(f"Navegando a {pagina}")
-            time.sleep(2)  # Deja cargar la página
+            self._esperar(2)  # Deja cargar la página
 
             if self._queda_tiempo(tiempo_final):
                 self.interactuar_con_pagina(pagina, tiempo_final)
-        except (FailsafeActivo, pyautogui.FailSafeException, KeyboardInterrupt):
+        except (PausaPorActividad, FailsafeActivo, pyautogui.FailSafeException, KeyboardInterrupt):
             interrumpido = True
             raise
         except Exception as e:
@@ -153,7 +155,7 @@ class WebInteractor(BaseAutomation):
                     if self.activar_navegador():
                         self._hotkey(self.cmd_key, 'w')
                         logging.info(f"Cerrando pestaña de: {pagina}")
-                except (FailsafeActivo, pyautogui.FailSafeException):
+                except (PausaPorActividad, FailsafeActivo, pyautogui.FailSafeException):
                     raise
                 except Exception:
                     logging.debug(f"No se pudo cerrar la pestaña de {pagina}", exc_info=True)
@@ -173,8 +175,8 @@ class WebInteractor(BaseAutomation):
                 return
             center_x = self.screen_width // 2
             center_y = self.screen_height // 2
-            pyautogui.moveTo(center_x, center_y, duration=0.3)
-            pyautogui.click()
+            self._move_to(center_x, center_y, duration=0.3)
+            self._click()
 
             while self._queda_tiempo(tiempo_final):
                 # Clicks aleatorios dentro del radio
@@ -183,12 +185,12 @@ class WebInteractor(BaseAutomation):
                 target_x = center_x + x_offset
                 target_y = center_y + y_offset
 
-                pyautogui.moveTo(target_x, target_y, duration=0.5)
-                pyautogui.click()
+                self._move_to(target_x, target_y, duration=0.5)
+                self._click()
 
                 # Scroll aleatorio
-                pyautogui.scroll(random.randint(-300, 300))
-                time.sleep(random.uniform(1, 3))
+                self._scroll(random.randint(-300, 300))
+                self._esperar(random.uniform(1, 3))
 
             self.registrar_tiempo_interaccion(pagina, tiempo_inicio)
         except pyautogui.FailSafeException:

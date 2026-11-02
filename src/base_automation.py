@@ -40,30 +40,81 @@ class BaseAutomation:
         self._antidespierto_activo = False
         self._proceso_caffeinate = None
         self._mac_keyboard = None
+        self.monitor_actividad = None
+
+    def _antes_accion(self):
+        if self.monitor_actividad is not None:
+            self.monitor_actividad.comprobar()
+
+    def _esperar(self, segundos):
+        if self.monitor_actividad is None:
+            time.sleep(segundos)
+        else:
+            self.monitor_actividad.esperar_intervalo(segundos)
 
     def _teclado_mac(self):
         if self._mac_keyboard is None:
             from mac_keyboard import MacKeyboard
-            self._mac_keyboard = MacKeyboard()
+            self._mac_keyboard = MacKeyboard(antes_evento=self._antes_accion)
         return self._mac_keyboard
 
     def _hotkey(self, *teclas):
+        self._antes_accion()
         if self.is_mac:
             self._teclado_mac().hotkey(*teclas)
         else:
             pyautogui.hotkey(*teclas)
 
     def _press(self, tecla):
+        self._antes_accion()
         if self.is_mac:
             self._teclado_mac().press(tecla)
         else:
             pyautogui.press(tecla)
 
     def _write(self, texto, interval=0):
+        self._antes_accion()
         if self.is_mac:
             self._teclado_mac().write(texto, interval=interval)
+        elif self.monitor_actividad is not None:
+            for caracter in texto:
+                self._antes_accion()
+                pyautogui.write(caracter, interval=0)
+                if interval:
+                    self._esperar(interval)
         else:
             pyautogui.write(texto, interval=interval)
+
+    def _move_to(self, x, y, duration=0):
+        self._antes_accion()
+        if self.monitor_actividad is None:
+            pyautogui.moveTo(x, y, duration=duration)
+            return
+        inicio_x, inicio_y = pyautogui.position()
+        pasos = max(1, int(duration / 0.01))
+        for paso in range(1, pasos + 1):
+            self._antes_accion()
+            fraccion = paso / pasos
+            pyautogui.moveTo(round(inicio_x + (x - inicio_x) * fraccion),
+                             round(inicio_y + (y - inicio_y) * fraccion), _pause=False)
+            if duration:
+                self._esperar(duration / pasos)
+
+    def _move_rel(self, x, y, duration=0):
+        self._antes_accion()
+        if self.monitor_actividad is None:
+            pyautogui.moveRel(x, y, duration=duration)
+        else:
+            actual_x, actual_y = pyautogui.position()
+            self._move_to(actual_x + x, actual_y + y, duration=duration)
+
+    def _click(self):
+        self._antes_accion()
+        pyautogui.click()
+
+    def _scroll(self, cantidad):
+        self._antes_accion()
+        pyautogui.scroll(cantidad)
 
     # ------------------------------------------------------------
     # Tiempo (time.monotonic)
@@ -88,6 +139,7 @@ class BaseAutomation:
 
     def activar_aplicacion(self, nombre_proceso: str, nombre_mac: str) -> bool:
         """Trae al frente la aplicación (por proceso en Windows, por app en macOS)"""
+        self._antes_accion()
         try:
             if self.is_windows:
                 exito = self._activar_aplicacion_windows(nombre_proceso)
@@ -100,6 +152,7 @@ class BaseAutomation:
             logging.error(f"Error activando la aplicación '{nombre_proceso or nombre_mac}': {e}")
             return False
 
+        self._antes_accion()
         return exito
 
     def _activar_si_necesario(self, nombre_proceso: str, nombre_mac: str) -> bool:
@@ -121,6 +174,7 @@ class BaseAutomation:
             logging.debug(f"Aplicación activada en macOS (frontmost): {nombre_mac}")
             return True
         except subprocess.CalledProcessError:
+            self._antes_accion()
             try:
                 subprocess.run(
                     ['osascript', '-e', f'tell application "{nombre_mac}" to activate'],
@@ -173,6 +227,7 @@ class BaseAutomation:
 
     def copiar_al_portapapeles(self, texto: str) -> bool:
         """Copia texto al portapapeles con fallback nativo; True si tuvo éxito"""
+        self._antes_accion()
         try:
             import pyperclip
             pyperclip.copy(texto)
@@ -195,6 +250,7 @@ class BaseAutomation:
 
     def leer_portapapeles(self) -> str:
         """Lee el portapapeles con fallback nativo; devuelve '' si no se puede"""
+        self._antes_accion()
         try:
             import pyperclip
             return pyperclip.paste()
@@ -265,9 +321,9 @@ class BaseAutomation:
         """Mueve el cursor a (x, y) con la duración indicada y, opcionalmente, hace clic"""
         try:
             logging.debug(f"Moviendo el cursor a ({x}, {y})")
-            pyautogui.moveTo(x, y, duration=duration)
+            self._move_to(x, y, duration=duration)
             if click:
-                pyautogui.click()
+                self._click()
             return True
         except pyautogui.FailSafeException:
             raise

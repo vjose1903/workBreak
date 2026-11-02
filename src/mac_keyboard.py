@@ -13,7 +13,12 @@ class MacKeyboard:
         'left': 0x7B, 'right': 0x7C, 'down': 0x7D, 'up': 0x7E,
     }
 
+    def __init__(self, antes_evento=None):
+        self.antes_evento = antes_evento
+
     def _enviar(self, codigo, flags=0, texto=None):
+        if self.antes_evento is not None:
+            self.antes_evento()
         pyautogui.failSafeCheck()
         for pulsada in (True, False):
             evento = Quartz.CGEventCreateKeyboardEvent(None, codigo, pulsada)

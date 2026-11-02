@@ -69,6 +69,7 @@ class EditorInteractor(BaseAutomation):
 
     def ejecutar_comando(self, cmd: list) -> bool:
         """Ejecuta el comando para abrir el editor; True si se lanzó correctamente"""
+        self._antes_accion()
         logging.info(f"Ejecutando comando: {cmd}")
         try:
             if self.is_windows:
@@ -115,7 +116,7 @@ class EditorInteractor(BaseAutomation):
             info = self.EDITOR_INFO[efectivo]
             if not self._esperar_ventana_editor(info):
                 raise EditorNoDisponible("No se pudo confirmar la ventana del editor")
-            time.sleep(1)
+            self._esperar(1)
 
             self.editor_actual = efectivo
             self._asegurar_destino()
@@ -144,7 +145,7 @@ class EditorInteractor(BaseAutomation):
         while time.monotonic() < limite:
             if self.activar_aplicacion(info["proceso"], info["mac"]):
                 return True
-            time.sleep(0.5)
+            self._esperar(0.5)
         return False
 
     def asegurar_editor_abierto(self, editor: str) -> None:
@@ -167,7 +168,7 @@ class EditorInteractor(BaseAutomation):
             raise EditorNoDisponible("No se pudo enfocar el editor; se cancela la entrada")
         # La comprobación del título se hace después de enfocar el grupo de código.
         self._hotkey(self.cmd_key, "1")
-        time.sleep(0.15)
+        self._esperar(0.15)
         try:
             if self.is_windows:
                 import win32gui
@@ -267,7 +268,7 @@ class EditorInteractor(BaseAutomation):
             if not self._queda_tiempo_editor(tiempo_final):
                 break
             self._editar_bloque_real(fin)
-            time.sleep(random.uniform(0.4, 1.8))
+            self._esperar(random.uniform(0.4, 1.8))
 
     def fase_mouse(self, tiempo_final: float) -> None:
         """Fase de mouse: sube al inicio del archivo, hace clic y scroll arriba/abajo para que las
@@ -287,23 +288,23 @@ class EditorInteractor(BaseAutomation):
             if not self._queda_tiempo_editor(tiempo_final):
                 break
             self._movimiento_fase_mouse()
-            time.sleep(random.uniform(0.4, 2.0))
+            self._esperar(random.uniform(0.4, 2.0))
 
     def _iniciar_fase_mouse(self) -> None:
         """Sube al inicio del archivo y hace clic sobre el editor para enfocarlo"""
         try:
             self._inicio_archivo()
-            time.sleep(random.uniform(0.2, 0.5))
+            self._esperar(random.uniform(0.2, 0.5))
             rect = self._rectangulo_ventana_editor()
             if rect:
                 x, y, ancho, alto = rect
-                pyautogui.moveTo(x + ancho // 3, y + max(120, alto // 3),
+                self._move_to(x + ancho // 3, y + max(120, alto // 3),
                                  duration=random.uniform(0.2, 0.6))
             else:
-                pyautogui.moveRel(random.randint(10, 40), random.randint(10, 40),
+                self._move_rel(random.randint(10, 40), random.randint(10, 40),
                                   duration=random.uniform(0.2, 0.6))
-            pyautogui.click()
-            time.sleep(random.uniform(0.2, 0.5))
+            self._click()
+            self._esperar(random.uniform(0.2, 0.5))
         except pyautogui.FailSafeException:
             raise
         except Exception as e:
@@ -314,17 +315,17 @@ class EditorInteractor(BaseAutomation):
         r = random.random()
         if r < 0.1:
             self._inicio_archivo()
-            time.sleep(0.1)
+            self._esperar(0.1)
         elif r < 0.7:
-            pyautogui.scroll(-random.randint(4, 12))
+            self._scroll(-random.randint(4, 12))
         elif r < 0.85:
-            pyautogui.scroll(random.randint(3, 8))
+            self._scroll(random.randint(3, 8))
         else:
             x = random.randint(-self.EDITOR_WINDOW_OFFSET, self.EDITOR_WINDOW_OFFSET)
             y = random.randint(-self.EDITOR_WINDOW_OFFSET, self.EDITOR_WINDOW_OFFSET)
-            pyautogui.moveRel(x, y, duration=random.uniform(0.2, 0.6))
+            self._move_rel(x, y, duration=random.uniform(0.2, 0.6))
             if random.random() < 0.5:
-                pyautogui.click()
+                self._click()
 
     def _rectangulo_ventana_editor(self):
         """Devuelve (x, y, ancho, alto) de la ventana del editor o None si no se puede obtener"""
@@ -361,6 +362,7 @@ class EditorInteractor(BaseAutomation):
             return
         for tecla in ("ctrl", "shift", "alt"):
             try:
+                self._antes_accion()
                 pyautogui.keyUp(tecla)
             except Exception:
                 pass
@@ -422,15 +424,15 @@ class EditorInteractor(BaseAutomation):
             self._limpiar_linea_actual()
         else:
             self._fin_linea()
-            time.sleep(random.uniform(0.05, 0.15))
+            self._esperar(random.uniform(0.05, 0.15))
 
         texto = linea[self.desplazamiento:]
         for c in texto:
             if not self._queda_tiempo_editor(tiempo_final):
                 return
             self._write(c, interval=0)
-            time.sleep(random.uniform(0.03, 0.08))
             self.desplazamiento += 1
+            self._esperar(random.uniform(0.03, 0.08))
 
         # El editor puede insertar comillas o paréntesis automáticamente al teclear.
         if linea:
@@ -519,7 +521,7 @@ class EditorInteractor(BaseAutomation):
     def _cerrar_paneles(self) -> None:
         """Cierra con Escape cualquier panel emergente (autocompletado, emojis, quick input)"""
         self._press("esc")
-        time.sleep(0.1)
+        self._esperar(0.1)
 
     def _ir_a_linea(self, numero: int) -> None:
         """Confirma el contenido de Ir a línea antes de enviar coordenadas."""
@@ -527,7 +529,7 @@ class EditorInteractor(BaseAutomation):
             self._hotkey("option", "g")
         else:
             self._hotkey("ctrl", "g")
-        time.sleep(0.2)
+        self._esperar(0.2)
         if self.is_mac:
             # Seleccionar/copiar no modifica el archivo si el panel no se abrió.
             self._hotkey("command", "a")
@@ -539,9 +541,9 @@ class EditorInteractor(BaseAutomation):
         else:
             destino = f"{numero}:1"
         self._write(destino, interval=0.03)
-        time.sleep(0.1)
+        self._esperar(0.1)
         self._press("enter")
-        time.sleep(0.2)
+        self._esperar(0.2)
         if self.is_mac:
             self._confirmar_linea_mac(numero)
         self._liberar_modificadores()
@@ -551,7 +553,7 @@ class EditorInteractor(BaseAutomation):
         if not self.copiar_al_portapapeles(marcador):
             raise EditorNoDisponible("No se pudo preparar la comprobación del cursor")
         self._hotkey("command", "c")
-        time.sleep(0.15)
+        self._esperar(0.15)
         contenido = self.leer_portapapeles()
         return None if contenido == marcador else contenido
 
@@ -599,17 +601,16 @@ class EditorInteractor(BaseAutomation):
         self._asegurar_destino()
 
         self._hotkey(self.cmd_key, 'a')
-        time.sleep(0.15)
+        self._esperar(0.15)
         self._hotkey(self.cmd_key, 'v')
-        time.sleep(0.3)
-        self._liberar_modificadores()
-
         self.lineas_actuales = codigo.splitlines()
         self.bloque_actual = None
         self.inicio_bloque = 0
         self.indice_linea = 0
         self.desplazamiento = 0
         self.necesita_reposicionar = True
+        self._esperar(0.3)
+        self._liberar_modificadores()
         logging.info(f"Código inyectado: {len(self.lineas_actuales)} líneas, {len(codigo)} caracteres")
 
     def restaurar_portapapeles(self) -> None:

@@ -102,6 +102,14 @@ python src/main.py -browser chrome -web "https://google.com,https://chat.openai.
 
 ## Detener el bot
 
+El bot se pausa automáticamente cuando detecta actividad del usuario en el teclado o el mouse, en cualquier aplicación y en cualquier fase. Cada tecla, movimiento, clic o scroll reinicia una espera de **10 segundos desde la última actividad**. Tras ese intervalo sin intervención, recupera su archivo y continúa; sus propios eventos no reinician la espera. Los movimientos animados se comprueban en pasos de unos 10 ms y cada carácter se comprueba antes de enviarlo.
+
+La terminal informa el inicio de la pausa, los reinicios del debounce, los segundos restantes y la reanudación. La cuenta se actualiza por segundo y los eventos continuos se agrupan para no saturar la consola. Si mantienes una tecla o un botón pulsado, indica que la cuenta comenzará cuando lo sueltes.
+
+El límite total de ejecución continúa contando durante la pausa. Si intervienes durante una visita web, el bot no cierra esa pestaña durante la intervención. Si modificas el contenido de su archivo temporal, las comprobaciones de línea pueden detener la ejecución para no sobrescribir tus cambios.
+
+En macOS la detección global requiere permiso de **Monitorización de entrada** y **Accesibilidad** para la aplicación desde la que ejecutas Python (por ejemplo, Terminal). Si no puede iniciar el monitor, el bot termina con un mensaje en lugar de ejecutarse sin esta protección. Windows utiliza los hooks nativos de teclado y mouse. No se requieren dependencias nuevas.
+
 Para finalizar el script, presiona `CTRL + C` en la terminal.
 
 También puedes activar la parada de emergencia de PyAutoGUI llevando el mouse a una esquina de la pantalla principal. Al detectarla, el bot no envía teclas para cerrar pestañas; puede quedar abierta la pestaña de esa interacción.

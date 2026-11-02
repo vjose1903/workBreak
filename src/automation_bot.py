@@ -12,6 +12,7 @@ from menu import (Configuracion, configuracion_desde_args, guardar_configuracion
                   menu_interactivo)
 from web_interactor import WebInteractor
 from statistics_tracker import StatisticsTracker
+from user_activity import MonitorActividad, PausaPorActividad
 
 class AutomationBot:
     def __init__(self):
@@ -68,17 +69,39 @@ class AutomationBot:
             self.editor_interactor.set_limite_tiempo(segundos_limite)
             self.web_interactor.set_limite_tiempo(segundos_limite)
 
-        self.editor_interactor.mantener_despierto_iniciar()
-
         codigo_salida = 0
         fallos_consecutivos = 0
         ultimo_log = time.monotonic()
+        monitor = MonitorActividad()
+        self.editor_interactor.monitor_actividad = monitor
+        self.web_interactor.monitor_actividad = monitor
+        recuperar_editor = False
 
         try:
+            monitor.iniciar()
+            self.editor_interactor.mantener_despierto_iniciar()
             while self._tiempo_restante() > 0:
                 try:
+                    monitor.comprobar()
+                    if recuperar_editor and self.editor_interactor.EDITOR_ABIERTO:
+                        cmd = self.editor_interactor._comando_abrir_editor(
+                            config.editor, self.editor_interactor.ruta_archivo)
+                        if not self.editor_interactor.ejecutar_comando(cmd):
+                            raise EditorNoDisponible("No se pudo recuperar el archivo del bot tras la pausa")
+                        self.editor_interactor._esperar(0.3)
+                    recuperar_editor = False
                     self.ejecutar_tareas(config.editor, paginas)
                     fallos_consecutivos = 0
+                except PausaPorActividad:
+                    self.editor_interactor.necesita_reposicionar = True
+                    recuperar_editor = True
+                    logging.info("Actividad del usuario: bot pausado hasta completar 10 segundos de inactividad")
+                    limite = self.editor_interactor._tiempo_limite_absoluto
+                    if not monitor.esperar_inactividad(limite=limite):
+                        logging.info("Tiempo total agotado durante la pausa; finalizando bot")
+                        break
+                    logging.info("Diez segundos sin actividad del usuario; reanudando bot")
+                    continue
                 except (pyautogui.FailSafeException, FailsafeActivo):
                     logging.warning("Failsafe activado (mouse en esquina); deteniendo el bot")
                     codigo_salida = 2
@@ -111,6 +134,9 @@ class AutomationBot:
         except KeyboardInterrupt:
             logging.info("Programa terminado por el usuario (Ctrl+C)")
             codigo_salida = 130
+        except Exception as e:
+            logging.error(f"No se pudo continuar la ejecución: {e}")
+            codigo_salida = 1
         finally:
             try:
                 self.editor_interactor.mantener_despierto_detener()
@@ -118,8 +144,13 @@ class AutomationBot:
                 logging.error(f"Error deteniendo anti-reposo: {e}")
             try:
                 self.editor_interactor.restaurar_portapapeles()
+            except PausaPorActividad:
+                pass  # No reemplazar el portapapeles mientras el usuario utiliza el equipo.
             except Exception as e:
                 logging.error(f"Error restaurando el portapapeles: {e}")
+            monitor.detener()
+            self.editor_interactor.monitor_actividad = None
+            self.web_interactor.monitor_actividad = None
             codigo_salida = self._imprimir_y_cerrar(codigo_salida)
 
         return codigo_salida
