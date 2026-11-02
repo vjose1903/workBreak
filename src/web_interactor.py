@@ -62,7 +62,11 @@ class WebInteractor(BaseAutomation):
             if not self.browser_abierto:
                 self._lanzar_navegador(config)
                 self.browser_abierto = True
-                return True
+                limite = time.monotonic() + 5
+                while self._queda_tiempo(limite):
+                    if self.activar_aplicacion(config['win'], config['mac']):
+                        return True
+                    time.sleep(0.2)
 
             logging.warning(f"Navegador {self.browser} no disponible y ya se intentó lanzar antes")
             return False
@@ -93,62 +97,80 @@ class WebInteractor(BaseAutomation):
             logging.warning("No hay navegador configurado")
             return
 
-        inicio = time.monotonic()
+        tiempo_final = (time.monotonic() + duracion_maxima
+                        if duracion_maxima is not None else float("inf"))
         for pagina in self.paginas:
-            if duracion_maxima is not None and time.monotonic() - inicio >= duracion_maxima:
+            if not self._queda_tiempo(tiempo_final):
                 break
-            self._procesar_pagina(pagina)
+            self._procesar_pagina(pagina, tiempo_final)
 
-    def _procesar_pagina(self, pagina) -> None:
+    def _procesar_pagina(self, pagina, tiempo_final=float("inf")) -> None:
         """Abre, interactúa y cierra una página con try/except/finally por página.
 
         Una página que falle no deja pestañas basura y no detiene el bot.
         """
         pagina_abierta = False
+        interrumpido = False
         try:
+            if not self._queda_tiempo(tiempo_final):
+                return
             if not self.activar_navegador():
                 logging.error(f"No se pudo activar el navegador para {pagina}")
                 return
 
-            self.move_cursor_to_center()  # Asegura foco
+            if not self._queda_tiempo(tiempo_final):
+                return
 
-            pyautogui.hotkey(self.cmd_key, 't')  # Pestaña nueva
+            self._hotkey(self.cmd_key, 't')  # Pestaña nueva
+            pagina_abierta = True
             time.sleep(0.4)
 
+            if not self._queda_tiempo(tiempo_final):
+                return
             if not self.copiar_al_portapapeles(pagina):
                 logging.error(f"No se pudo copiar la URL de {pagina}, se omite")
                 return
 
-            pyautogui.hotkey(self.cmd_key, 'v')
-            pyautogui.press('return')
-            pagina_abierta = True
+            if not self._queda_tiempo(tiempo_final):
+                return
+            self._hotkey(self.cmd_key, 'v')
+            if not self._queda_tiempo(tiempo_final):
+                return
+            self._press('return')
             logging.info(f"Navegando a {pagina}")
             time.sleep(2)  # Deja cargar la página
 
-            self.interactuar_con_pagina(pagina)
-        except FailsafeActivo:
+            if self._queda_tiempo(tiempo_final):
+                self.interactuar_con_pagina(pagina, tiempo_final)
+        except (FailsafeActivo, pyautogui.FailSafeException, KeyboardInterrupt):
+            interrumpido = True
             raise
         except Exception as e:
             logging.error(f"Error procesando página {pagina}: {e}", exc_info=True)
         finally:
-            if pagina_abierta:
+            if pagina_abierta and not interrumpido:
                 try:
-                    pyautogui.hotkey(self.cmd_key, 'w')
-                    logging.info(f"Cerrando pestaña de: {pagina}")
+                    if self.activar_navegador():
+                        self._hotkey(self.cmd_key, 'w')
+                        logging.info(f"Cerrando pestaña de: {pagina}")
+                except (FailsafeActivo, pyautogui.FailSafeException):
+                    raise
                 except Exception:
                     logging.debug(f"No se pudo cerrar la pestaña de {pagina}", exc_info=True)
 
-    def interactuar_con_pagina(self, pagina):
+    def interactuar_con_pagina(self, pagina, tiempo_turno=float("inf")):
         """Interactúa con una página abierta en el navegador"""
         duracion = random.uniform(10, 20)
         restante = self.tiempo_restante()
         if restante is not None:
             duracion = min(duracion, restante)
-        tiempo_final = time.monotonic() + duracion
+        tiempo_final = min(time.monotonic() + duracion, tiempo_turno)
         tiempo_inicio = time.monotonic()
         logging.info(f"Interactuando con {pagina} por {duracion:.1f} segundos")
 
         try:
+            if not self._queda_tiempo(tiempo_final):
+                return
             center_x = self.screen_width // 2
             center_y = self.screen_height // 2
             pyautogui.moveTo(center_x, center_y, duration=0.3)

@@ -34,9 +34,8 @@ class AutomationBot:
     def configurar_parser(self):
         """Configura el parser de argumentos para la ejecución del bot"""
         parser = argparse.ArgumentParser(description="Bot para descansos en el trabajo")
-        parser.add_argument("-editor", type=self.editor_interactor.validar_editor, required=False,
-                            help=f"Editor a usar: {', '.join(self.editor_interactor.VALID_EDITORS)} "
-                                 f"(si no se pasa, se muestra el menú interactivo)")
+        # Compatibilidad con comandos anteriores; el editor siempre es VS Code.
+        parser.add_argument("-editor", choices=["vsCode"], help=argparse.SUPPRESS)
         parser.add_argument("-browser", type=self.web_interactor.validar_browser, required=False,
                             help=f"Navegador a usar: {', '.join(self.web_interactor.VALID_BROWSERS)}")
         parser.add_argument("-web", type=str, required=False,
@@ -146,11 +145,11 @@ class AutomationBot:
             self.editor_interactor.interactuar_editor()
 
     def ejecutar(self) -> int:
-        """Si se pasa el editor por CLI usa la configuración de args; si no, muestra el menú interactivo"""
+        """Usa los argumentos proporcionados o muestra el menú interactivo."""
         parser = self.configurar_parser()
         args = parser.parse_args()
 
-        if args.editor:
+        if args.editor or args.browser or args.web is not None or args.tiempo is not None:
             config = configuracion_desde_args(args)
         else:
             config = menu_interactivo()

@@ -19,12 +19,6 @@ class FailsafeActivo(Exception):
 
 
 class BaseAutomation:
-    # Cache compartida entre instancias (EditorInteractor y WebInteractor) para
-    # evitar activar la misma aplicación repetidamente (osascript es lento ~0.7-0.9s)
-    _app_frontmost: Optional[str] = None
-    _app_frontmost_ts: float = 0.0
-    _ACTIVACION_TTL = 8.0
-
     def __init__(self):
         pyautogui.FAILSAFE = True
         pyautogui.PAUSE = 0.05
@@ -45,6 +39,31 @@ class BaseAutomation:
         # Estado del anti-reposo
         self._antidespierto_activo = False
         self._proceso_caffeinate = None
+        self._mac_keyboard = None
+
+    def _teclado_mac(self):
+        if self._mac_keyboard is None:
+            from mac_keyboard import MacKeyboard
+            self._mac_keyboard = MacKeyboard()
+        return self._mac_keyboard
+
+    def _hotkey(self, *teclas):
+        if self.is_mac:
+            self._teclado_mac().hotkey(*teclas)
+        else:
+            pyautogui.hotkey(*teclas)
+
+    def _press(self, tecla):
+        if self.is_mac:
+            self._teclado_mac().press(tecla)
+        else:
+            pyautogui.press(tecla)
+
+    def _write(self, texto, interval=0):
+        if self.is_mac:
+            self._teclado_mac().write(texto, interval=interval)
+        else:
+            pyautogui.write(texto, interval=interval)
 
     # ------------------------------------------------------------
     # Tiempo (time.monotonic)
@@ -81,17 +100,10 @@ class BaseAutomation:
             logging.error(f"Error activando la aplicación '{nombre_proceso or nombre_mac}': {e}")
             return False
 
-        if exito:
-            BaseAutomation._app_frontmost = nombre_proceso or nombre_mac
-            BaseAutomation._app_frontmost_ts = time.monotonic()
         return exito
 
     def _activar_si_necesario(self, nombre_proceso: str, nombre_mac: str) -> bool:
-        """Activa la app solo si no es la que ya está al frente recientemente (evita osascript innecesarios)"""
-        clave = nombre_proceso or nombre_mac
-        if (BaseAutomation._app_frontmost == clave
-                and time.monotonic() - BaseAutomation._app_frontmost_ts < BaseAutomation._ACTIVACION_TTL):
-            return True
+        """Confirma la activación sin confiar en un foco guardado anteriormente."""
         return self.activar_aplicacion(nombre_proceso, nombre_mac)
 
     def _activar_aplicacion_mac(self, nombre_mac: str) -> bool:
@@ -99,7 +111,10 @@ class BaseAutomation:
         try:
             subprocess.run(
                 ['osascript', '-e',
-                 f'tell application "System Events" to set frontmost of process "{nombre_mac}" to true'],
+                 f'set appBundleId to id of application "{nombre_mac}"\n'
+                 'tell application "System Events"\n'
+                 'set frontmost of (first application process whose bundle identifier is appBundleId) to true\n'
+                 'end tell'],
                 check=True,
                 capture_output=True
             )
@@ -119,16 +134,35 @@ class BaseAutomation:
                 return False
 
     def _activar_aplicacion_windows(self, nombre_proceso: str) -> bool:
-        """Activa la primera ventana del proceso en Windows vía pygetwindow"""
+        """Activa una ventana perteneciente al ejecutable solicitado."""
         try:
-            import pygetwindow as gw
-            ventanas = gw.getWindowsWithTitle(nombre_proceso)
+            import psutil
+            import win32gui
+            import win32process
+            ventanas = []
+
+            def agregar_ventana(hwnd, _):
+                if not win32gui.IsWindowVisible(hwnd) or not win32gui.GetWindowText(hwnd):
+                    return
+                try:
+                    _, pid = win32process.GetWindowThreadProcessId(hwnd)
+                    if psutil.Process(pid).name().lower() == nombre_proceso.lower():
+                        ventanas.append(hwnd)
+                except (psutil.NoSuchProcess, psutil.AccessDenied):
+                    pass
+
+            win32gui.EnumWindows(agregar_ventana, None)
             if not ventanas:
                 logging.warning(f"No se encontraron ventanas para el proceso: {nombre_proceso}")
                 return False
-            ventanas[0].activate()
+            hwnd = win32gui.GetForegroundWindow()
+            if hwnd not in ventanas:
+                hwnd = ventanas[0]
+                if win32gui.IsIconic(hwnd):
+                    win32gui.ShowWindow(hwnd, 9)  # SW_RESTORE
+                win32gui.SetForegroundWindow(hwnd)
             logging.debug(f"Ventana activada en Windows: {nombre_proceso}")
-            return True
+            return win32gui.GetForegroundWindow() == hwnd
         except Exception as e:
             logging.error(f"Error activando la ventana en Windows ({nombre_proceso}): {e}")
             return False

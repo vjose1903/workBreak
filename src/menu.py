@@ -8,7 +8,6 @@ from typing import Any, List, Optional
 from code_generator import CodeGenerator
 from code_source import RealProjectSource
 
-EDITORES_VALIDOS = ["vsCode", "cursor"]
 NAVEGADORES_VALIDOS = ["chrome", "edge", "opera", "firefox"]
 NAVEGADOR_NINGUNO = {"ninguno", "none", "no", "0", ""}
 MAX_HISTORIAL = 5
@@ -19,7 +18,7 @@ RUTA_HISTORIAL = Path(__file__).resolve().parent.parent / "config_history.json"
 @dataclass
 class Configuracion:
     """Configuración completa del bot, construida desde el menú interactivo o los args CLI."""
-    editor: Optional[str] = None
+    editor: str = field(default="vsCode", init=False)
     browser: Optional[str] = None
     paginas: List[str] = field(default_factory=list)
     fuente: Any = None
@@ -54,12 +53,6 @@ def _preguntar(mensaje: str, validas: Optional[set] = None, por_defecto: Optiona
         if validas is None or entrada in validas:
             return entrada
         print(f"  Entrada inválida. Usa: {', '.join(sorted(validas))}")
-
-
-def _seleccionar_editor(config: Configuracion) -> None:
-    print(f"\n  Editores disponibles: {', '.join(EDITORES_VALIDOS)}")
-    editor = _preguntar("  Editor a usar: ", set(EDITORES_VALIDOS))
-    config.editor = editor
 
 
 def _seleccionar_navegador(config: Configuracion) -> None:
@@ -128,34 +121,28 @@ def menu_interactivo() -> Optional[Configuracion]:
         print("\n--- Configuración actual ---")
         print(config.resumen())
         print("----------------------------")
-        print("  [1] Elegir editor")
-        print("  [2] Elegir navegador")
-        print("  [3] Definir webs a simular")
-        print("  [4] Elegir fuente de código")
-        print("  [5] Definir tiempo (minutos)")
-        print("  [6] Usar configuración previa")
-        print("  [7] INICIAR BOT")
-        print("  [8] Salir")
-        opcion = _preguntar("  Opción: ", {"1", "2", "3", "4", "5", "6", "7", "8"})
+        print("  [1] Elegir navegador")
+        print("  [2] Definir webs a simular")
+        print("  [3] Elegir fuente de código")
+        print("  [4] Definir tiempo (minutos)")
+        print("  [5] Usar configuración previa")
+        print("  [6] INICIAR BOT")
+        print("  [7] Salir")
+        opcion = _preguntar("  Opción: ", {"1", "2", "3", "4", "5", "6", "7"})
 
         if opcion == "1":
-            _seleccionar_editor(config)
-        elif opcion == "2":
             _seleccionar_navegador(config)
-        elif opcion == "3":
+        elif opcion == "2":
             _seleccionar_webs(config)
-        elif opcion == "4":
+        elif opcion == "3":
             _seleccionar_fuente(config)
-        elif opcion == "5":
+        elif opcion == "4":
             _seleccionar_tiempo(config)
-        elif opcion == "6":
+        elif opcion == "5":
             _cargar_config_previa(config)
-        elif opcion == "7":
-            if not config.editor:
-                print("\n  Debes elegir un editor antes de iniciar (opción 1 o 6)")
-                continue
+        elif opcion == "6":
             return config
-        elif opcion == "8":
+        elif opcion == "7":
             return None
 
 
@@ -189,7 +176,6 @@ def _dict_a_config(d: dict) -> Configuracion:
         descripcion = d.get("fuente_descripcion", "Código React/TS aleatorio")
 
     return Configuracion(
-        editor=d.get("editor"),
         browser=d.get("browser"),
         paginas=[p for p in (d.get("paginas") or []) if isinstance(p, str)],
         fuente=fuente,
@@ -247,7 +233,7 @@ def _cargar_config_previa(config: Configuracion) -> bool:
 
     print("\n  Configuraciones de las últimas sesiones:")
     for i, r in enumerate(registros, 1):
-        editor = r.get("editor") or "?"
+        editor = config.editor
         browser = r.get("browser") or "ninguno"
         webs = ", ".join(r.get("paginas") or []) or "ninguna"
         fuente = r.get("fuente_descripcion", "?")
@@ -263,7 +249,6 @@ def _cargar_config_previa(config: Configuracion) -> bool:
     d = registros[int(opcion) - 1]
     previa = _dict_a_config(d)
 
-    config.editor = previa.editor
     config.browser = previa.browser
     config.paginas = previa.paginas
     config.fuente = previa.fuente
@@ -277,7 +262,6 @@ def configuracion_desde_args(args) -> Configuracion:
     """Construye la configuración a partir de argumentos CLI (modo avanzado)."""
     paginas = [u.strip() for u in args.web.split(",") if u.strip()] if args.web else []
     return Configuracion(
-        editor=args.editor,
         browser=args.browser,
         paginas=paginas,
         fuente=CodeGenerator(),
