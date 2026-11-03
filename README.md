@@ -9,7 +9,7 @@
 </p>
 
 <p align="center">
-  <img src="https://img.shields.io/badge/versi%C3%B3n_del_c%C3%B3digo-1.0.1-536DFE" alt="Versión del código: 1.0.1" />
+  <a href="https://github.com/vjose1903/workBreak/releases/latest"><img src="https://img.shields.io/github/v/release/vjose1903/workBreak?sort=semver&label=%C3%BAltima%20versi%C3%B3n&color=536DFE" alt="Última versión publicada" /></a>
   <img src="https://img.shields.io/badge/macOS-15%2B-black?logo=apple" alt="macOS 15 o posterior" />
   <img src="https://img.shields.io/badge/arquitecturas-Intel_%7C_Apple_Silicon-00A6CB" alt="Intel y Apple Silicon" />
   <a href="https://github.com/vjose1903/workBreak/actions/workflows/release-macos.yml"><img src="https://github.com/vjose1903/workBreak/actions/workflows/release-macos.yml/badge.svg" alt="Estado de publicación de macOS" /></a>
