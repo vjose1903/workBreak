@@ -48,6 +48,20 @@ class ContextoCancelado(ContextoSimulado):
 
 
 class ControladorBotTest(unittest.TestCase):
+    def setUp(self):
+        # Las pruebas no dependen de los editores instalados en la máquina (los runners de CI no tienen ninguno).
+        editores = patch('app_controller.editores_instalados', return_value={'vsCode': 'Visual Studio Code'})
+        editores.start()
+        self.addCleanup(editores.stop)
+
+    def test_sin_editor_instalado_no_crea_proceso(self):
+        controlador = ControladorBot()
+        with patch('app_controller.sys.platform', 'darwin'), \
+                patch('app_controller.editores_instalados', return_value={}):
+            with self.assertRaisesRegex(ValueError, 'editor compatible'):
+                controlador.iniciar(_config_a_dict(Configuracion()))
+        self.assertIsNone(controlador.proceso)
+
     def test_error_abriendo_log_llega_a_la_interfaz(self):
         eventos = queue.Queue()
         with patch('app_controller.signal.signal'), \

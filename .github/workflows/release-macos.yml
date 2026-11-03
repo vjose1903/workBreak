@@ -30,9 +30,10 @@ jobs:
           RELEASE_TAG: ${{ inputs.tag || github.ref_name }}
         run: node scripts/release.js --check-tag "$RELEASE_TAG"
       - name: Probar publicación con repositorios temporales
+        # Corre aunque falle la validación del tag para ver todos los errores en una sola ejecución.
+        if: ${{ !cancelled() }}
         run: node --test tests/release.test.js
-  build:
-    needs: validate
+  test:
     strategy:
       fail-fast: false
       matrix:
@@ -42,6 +43,7 @@ jobs:
           - runner: macos-15
             arch: arm64
     runs-on: ${{ matrix.runner }}
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v7
         with:
@@ -55,6 +57,29 @@ jobs:
         run: python -m pip install -r requirements-build-mac.lock
       - name: Pruebas sin automatización real
         run: python -m unittest discover -s tests
+  build:
+    # Compila en paralelo con validate y test: un fallo en uno no oculta los errores de los demás.
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: macos-15-intel
+            arch: x86_64
+          - runner: macos-15
+            arch: arm64
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ inputs.tag || github.ref }}
+      - uses: actions/setup-python@v7
+        with:
+          python-version: '3.12'
+          cache: pip
+          cache-dependency-path: requirements-build-mac.lock
+      - name: Instalar dependencias de compilación
+        run: python -m pip install -r requirements-build-mac.lock
       - name: Crear instaladores
         run: python scripts/build_macos.py --no-migrate
       - uses: actions/upload-artifact@v7
@@ -67,8 +92,10 @@ jobs:
           if-no-files-found: error
           overwrite: true
   release:
-    needs: build
+    # Solo publica si el tag es válido, todas las pruebas pasan y ambas arquitecturas compilaron.
+    needs: [validate, test, build]
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     permissions:
       contents: write
     steps:
