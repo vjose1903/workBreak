@@ -1,6 +1,7 @@
 import os
 import sys
 import unittest
+from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'src'))
@@ -199,10 +200,16 @@ class MonitorActividadTest(unittest.TestCase):
         quartz.kCGEventTapDisabledByUserInput = -2
         quartz.CGEventGetIntegerValueField.side_effect = lambda evento, _: evento['pid']
 
+        quartz.CGEventGetLocation.side_effect = lambda evento: SimpleNamespace(x=evento['x'], y=evento['y'])
+
         def procesar(*_):
             callback = quartz.CGEventTapCreate.call_args.args[4]
-            callback(None, quartz.kCGEventMouseMoved, {'pid': os.getpid()}, None)
+            callback(None, quartz.kCGEventMouseMoved, {'pid': os.getpid(), 'x': 0, 'y': 0}, None)
             monitor.comprobar()  # El movimiento propio no pausa.
+            # macOS reemite el movimiento del bot con otro origen al llegar a su destino.
+            monitor.marcar_movimiento_bot(4000, 500)
+            callback(None, quartz.kCGEventMouseMoved, {'pid': 0, 'x': 4000.5, 'y': 501}, None)
+            monitor.comprobar()
             callback(None, quartz.kCGEventKeyDown, {'pid': 0}, None)
             monitor._detener.set()
 
@@ -212,6 +219,37 @@ class MonitorActividadTest(unittest.TestCase):
         self.assertEqual(monitor._version, 1)
         with self.assertRaises(PausaPorActividad):
             monitor.comprobar()
+
+
+    def test_movimiento_ajeno_lejos_del_destino_del_bot_si_pausa(self):
+        monitor = MonitorActividad(margen_inicial=0)
+        monitor._detectar_desde = 0
+        monitor.marcar_movimiento_bot(4000, 500)
+        self.assertTrue(monitor._es_movimiento_bot(4001, 499))
+        self.assertFalse(monitor._es_movimiento_bot(3900, 500))
+        monitor.marcar_movimiento_bot(4000, 500, margen=-1)
+        self.assertFalse(monitor._es_movimiento_bot(4000, 500))
+
+    def test_pausa_informa_su_causa(self):
+        monitor = MonitorActividad(debounce=0)
+        monitor._detectar_desde = 0
+        monitor.registrar(causa='evento 5 del proceso 0')
+        with self.assertLogs(level='INFO') as registros:
+            monitor.debounce = 0.01
+            monitor.esperar_inactividad()
+        self.assertIn('causa: evento 5 del proceso 0', '\n'.join(registros.output))
+
+
+    def test_modificadores_que_dejan_los_atajos_del_bot_no_cuentan_como_pulsados(self):
+        monitor = MonitorActividad()
+        quartz = MagicMock()
+        quartz.CFRunLoopRunInMode.side_effect = lambda *_: monitor._detener.set()
+        # macOS reporta ⌘ izquierdo (55) pulsado tras un atajo del bot; Enter (36) sí es real.
+        quartz.CGEventSourceKeyState.side_effect = lambda _estado, codigo: codigo in (36, 55)
+        quartz.CGEventSourceButtonState.return_value = False
+        with patch.dict(sys.modules, {'Quartz': quartz}):
+            monitor._escuchar_mac()
+            self.assertEqual(monitor._pulsadas_fisicas(), [('tecla', 36)])
 
 
 if __name__ == '__main__':

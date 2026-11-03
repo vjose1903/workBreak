@@ -22,6 +22,10 @@ class EditorNoDisponible(Exception):
     """Excepción para cuando no se puede abrir ningún editor instalado"""
 
 
+class LineaDesincronizada(Exception):
+    """En una ventana del usuario, el editor cambió el código del bot (formateo, extensiones)."""
+
+
 class EditorInteractor(BaseAutomation):
     def __init__(self, stats_tracker: StatisticsTracker, fuente_codigo=None):
         super().__init__()
@@ -49,6 +53,9 @@ class EditorInteractor(BaseAutomation):
         self.informar_estado = None
         self._fases_con_archivo = 0
         self.EDITOR_INFO = EDITORES
+        # True si al iniciar ya había una ventana del editor: el archivo se abre en ella.
+        self.reutilizar_ventana = False
+        self._resincronizaciones = 0
 
     def validar_editor(self, value: str) -> str:
         """Valida que el editor esté en la lista de editores válidos"""
@@ -70,7 +77,10 @@ class EditorInteractor(BaseAutomation):
             cmd = ['open', '-g', '-a', self.EDITOR_INFO[editor]['mac']]
         else:
             return None
-        if self.directorio_trabajo and not self.EDITOR_ABIERTO:
+        if self.reutilizar_ventana:
+            # Sin la carpeta temporal: no se reemplaza el espacio de trabajo de esa ventana.
+            cmd.append('--reuse-window')
+        elif self.directorio_trabajo and not self.EDITOR_ABIERTO:
             cmd.extend(['--new-window', self.directorio_trabajo])
         if ruta_archivo:
             cmd.append(ruta_archivo)
@@ -137,6 +147,9 @@ class EditorInteractor(BaseAutomation):
         try:
             # El nombre único permite distinguir esta pestaña de las del usuario.
             self.ruta_archivo = self._crear_archivo_temporal()
+            self.reutilizar_ventana = self._editor_tiene_ventana(editor)
+            if self.reutilizar_ventana:
+                logging.info("Hay una ventana del editor abierta; el archivo del bot se abre en ella")
 
             efectivo = self._lanzar_editor(editor, self.ruta_archivo)
             if efectivo is None:
@@ -153,6 +166,7 @@ class EditorInteractor(BaseAutomation):
             self.editor_actual = efectivo
             self._asegurar_destino()
             self.EDITOR_ABIERTO = True
+            self._llevar_mouse_al_editor()
         except (EditorNoDisponible, pyautogui.FailSafeException):
             raise
         except Exception as e:
@@ -184,6 +198,43 @@ class EditorInteractor(BaseAutomation):
             return
 
         self._asegurar_destino()
+        self._llevar_mouse_al_editor()
+
+    def _editor_tiene_ventana(self, editor: str) -> bool:
+        """True si el editor ya tiene alguna ventana (también minimizada o en otro escritorio)."""
+        if not self.is_mac:
+            return False
+        try:
+            from AppKit import NSRunningApplication
+            import Quartz as q
+            pids = {app.processIdentifier() for app in
+                    NSRunningApplication.runningApplicationsWithBundleIdentifier_(EDITORES[editor]['bundle'])}
+            if not pids:
+                return False
+            ventanas = q.CGWindowListCopyWindowInfo(
+                q.kCGWindowListOptionAll | q.kCGWindowListExcludeDesktopElements, q.kCGNullWindowID)
+            for ventana in ventanas or []:
+                limites = ventana.get('kCGWindowBounds') or {}
+                if (ventana.get('kCGWindowLayer') == 0 and ventana.get('kCGWindowOwnerPID') in pids
+                        and limites.get('Width', 0) >= 200 and limites.get('Height', 0) >= 200):
+                    return True
+        except Exception as e:
+            logging.warning(f"No se pudo comprobar si el editor tiene ventanas abiertas: {e}")
+        return False
+
+    def _llevar_mouse_al_editor(self) -> None:
+        """Lleva el cursor a la pantalla del editor enfocado si está fuera de su ventana."""
+        acciones = acciones_config({'fases': self.fases, 'acciones_editor': self.acciones}, 'editor')
+        if not acciones['mover_mouse']:
+            return
+        try:
+            centro = self._configurar_area_mouse(self._rectangulo_ventana_editor())
+        except RuntimeError as e:
+            logging.warning(f"No se pudo llevar el mouse al editor: {e}")
+            return
+        if not self._mouse_en_area_segura():
+            # Un salto directo: un recorrido entre pantallas atraviesa huecos sin monitor.
+            self._move_to(*centro)
 
     def _asegurar_destino(self) -> None:
         """Rechaza la entrada si no está activo el archivo temporal de esta sesión."""
@@ -444,6 +495,8 @@ class EditorInteractor(BaseAutomation):
                 self.necesita_reposicionar = True
 
             self._escribir_siguiente_linea(tiempo_final)
+        except LineaDesincronizada:
+            self._resincronizar_codigo()
         except (pyautogui.FailSafeException, EditorNoDisponible):
             raise
         except Exception as e:
@@ -500,8 +553,16 @@ class EditorInteractor(BaseAutomation):
         self.indice_linea += 1
         self.desplazamiento = 0
         self.necesita_reposicionar = True
+        self._resincronizaciones = 0
 
     def _insertar_caracter(self, caracter):
+        if self.reutilizar_ventana:
+            # En una ventana del usuario rigen sus ajustes: autocierre, etiquetas JSX y
+            # sugerencias que se aceptan con «(» o «.». Pegar el carácter no los activa.
+            if not self.copiar_al_portapapeles(caracter):
+                raise EditorNoDisponible("No se pudo preparar el carácter a escribir")
+            self._hotkey(self.cmd_key, 'v')
+            return
         self._write(caracter)
 
     def _max_bloque_segun_tamano(self) -> int:
@@ -582,7 +643,9 @@ class EditorInteractor(BaseAutomation):
 
     def _ir_a_linea(self, numero: int) -> None:
         """Navega al archivo controlado y confirma la línea antes de editarla."""
-        if self.is_mac and self.directorio_trabajo:
+        # En una ventana del usuario `code --goto --reuse-window` no mueve el cursor del
+        # archivo ya abierto: se usa el panel Ir a línea dentro del editor.
+        if self.is_mac and self.directorio_trabajo and not self.reutilizar_ventana:
             cmd = self._comando_abrir_editor(self.editor_actual, self.ruta_archivo)
             if not cmd:
                 raise EditorNoDisponible('No se pudo preparar la navegación al archivo temporal')
@@ -636,7 +699,10 @@ class EditorInteractor(BaseAutomation):
                 "longitud_esperada": len(esperada),
                 "longitud_leida": len(actual) if actual is not None else None,
                 "captura_previa": numero in self._lineas_observadas,
+                "esperada": esperada[:80], "leida": actual[:80] if actual is not None else None,
             }, ensure_ascii=False))
+            if self.reutilizar_ventana and actual is not None:
+                raise LineaDesincronizada()
             raise EditorNoDisponible("El cursor no está en la línea esperada; se cancela la edición del fragmento")
 
     def _leer_linea_completa_mac(self) -> Optional[str]:
@@ -662,7 +728,10 @@ class EditorInteractor(BaseAutomation):
             logging.error("Contenido de línea inesperado: %s", json.dumps({
                 "linea": numero, "desplazamiento": self.desplazamiento,
                 "longitud_esperada": len(esperada), "longitud_leida": len(actual),
+                "esperada": esperada[:80], "leida": actual[:80],
             }, ensure_ascii=False))
+            if self.reutilizar_ventana:
+                raise LineaDesincronizada()
             raise EditorNoDisponible("La línea cambió fuera de la escritura controlada; no se sobrescribirá")
         self._lineas_observadas[numero] = actual
 
@@ -710,7 +779,44 @@ class EditorInteractor(BaseAutomation):
         self.necesita_reposicionar = True
         self._esperar(0.3)
         self._liberar_modificadores()
+        if self.reutilizar_ventana:
+            self._sincronizar_codigo_pegado()
         logging.info(f"Código inyectado: {len(self.lineas_actuales)} líneas, {len(codigo)} caracteres")
+
+    def _sincronizar_codigo_pegado(self) -> None:
+        """Toma como referencia el texto que muestra el editor tras pegar.
+
+        Los ajustes del usuario (formatear o reindentar al pegar) pueden cambiar el código:
+        las comprobaciones de línea deben compararse con lo que realmente quedó.
+        """
+        anterior = None
+        # Los formateadores pueden tardar: se espera a dos lecturas iguales seguidas.
+        for _ in range(6):
+            self._esperar(0.5)
+            self._hotkey(self.cmd_key, 'a')
+            contenido = self._leer_seleccion_mac()
+            self._press('left')
+            if contenido is None:
+                raise EditorNoDisponible("No se pudo leer el código pegado en el editor")
+            if contenido == anterior:
+                break
+            anterior = contenido
+        self.lineas_actuales = contenido.splitlines()
+
+    def _resincronizar_codigo(self) -> None:
+        """Adopta el código que muestra el editor y elige otro bloque, sin detener la sesión."""
+        self._resincronizaciones += 1
+        if self._resincronizaciones > 3:
+            raise EditorNoDisponible("El editor sigue cambiando el código del bot; se cancela la edición")
+        logging.warning("El editor cambió el código del bot; se toma lo que muestra como nueva referencia")
+        # Confirmar que el archivo del bot sigue activo antes de copiar todo su contenido.
+        self._asegurar_destino()
+        self._sincronizar_codigo_pegado()
+        self._lineas_observadas.clear()
+        self.bloque_actual = None
+        self.indice_linea = 0
+        self.desplazamiento = 0
+        self.necesita_reposicionar = True
 
     def restaurar_portapapeles(self) -> None:
         """Restaura el portapapeles del usuario al valor guardado en la primera inyección"""

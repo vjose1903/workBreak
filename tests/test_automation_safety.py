@@ -20,7 +20,7 @@ teclado.FailSafeException = FailSafeException
 teclado.size.return_value = (1920, 1080)
 with patch.dict(sys.modules, {'pyautogui': teclado}):
     from base_automation import TiempoAgotado, PortapapelesNoDisponible
-    from editor_interactor import EditorInteractor, EditorNoDisponible
+    from editor_interactor import EditorInteractor, EditorNoDisponible, LineaDesincronizada
     from statistics_tracker import StatisticsTracker
     from web_interactor import WebInteractor
     from automation_bot import AutomationBot
@@ -259,6 +259,10 @@ class AutomationSafetyTest(unittest.TestCase):
         direccion = patch.object(self.web, '_leer_url_actual', return_value='https://example.com')
         direccion.start()
         self.addCleanup(direccion.stop)
+        # Nunca consultar las ventanas reales del editor.
+        ventanas_editor = patch.object(self.editor, '_editor_tiene_ventana', return_value=False)
+        ventanas_editor.start()
+        self.addCleanup(ventanas_editor.stop)
         # Nunca consultar el navegador real con AppleScript.
         silenciosa = patch.object(self.web, '_leer_url_silenciosa', return_value=None)
         silenciosa.start()
@@ -1132,6 +1136,110 @@ class AutomationSafetyTest(unittest.TestCase):
             self.editor.EDITOR_ABIERTO = True
             recuperar = self.editor._comando_abrir_editor('vsCode', '/tmp/workbreak_prueba/archivo.tsx')
             self.assertEqual(recuperar[1:], ['/tmp/workbreak_prueba/archivo.tsx'])
+            # Con una ventana del editor ya abierta, el archivo se abre en ella sin la carpeta.
+            self.editor.EDITOR_ABIERTO = False
+            self.editor.reutilizar_ventana = True
+            existente = self.editor._comando_abrir_editor('vsCode', '/tmp/workbreak_prueba/archivo.tsx')
+            self.assertEqual(existente[1:], ['--reuse-window', '/tmp/workbreak_prueba/archivo.tsx'])
+
+    def test_detecta_ventana_abierta_del_editor(self):
+        self.editor.is_mac = True
+        appkit, cuarzo = MagicMock(), MagicMock()
+        appkit.NSRunningApplication.runningApplicationsWithBundleIdentifier_.return_value = [
+            SimpleNamespace(processIdentifier=lambda: 40)]
+        ventana = {'kCGWindowLayer': 0, 'kCGWindowOwnerPID': 40,
+                   'kCGWindowBounds': {'Width': 1200, 'Height': 800}}
+        with patch.dict(sys.modules, {'AppKit': appkit, 'Quartz': cuarzo}):
+            cuarzo.CGWindowListCopyWindowInfo.return_value = [ventana]
+            self.assertTrue(EditorInteractor._editor_tiene_ventana(self.editor, 'vsCode'))
+            # Ventanas de otra app o auxiliares diminutas no cuentan.
+            cuarzo.CGWindowListCopyWindowInfo.return_value = [
+                dict(ventana, kCGWindowOwnerPID=41),
+                dict(ventana, kCGWindowBounds={'Width': 10, 'Height': 10})]
+            self.assertFalse(EditorInteractor._editor_tiene_ventana(self.editor, 'vsCode'))
+            appkit.NSRunningApplication.runningApplicationsWithBundleIdentifier_.return_value = []
+            self.assertFalse(EditorInteractor._editor_tiene_ventana(self.editor, 'vsCode'))
+
+    def test_ventana_reutilizada_toma_el_codigo_que_muestra_el_editor(self):
+        self.editor.reutilizar_ventana = True
+        self.editor.fuente_codigo = MagicMock(obtener_codigo=MagicMock(return_value='a\n    b'))
+        with patch.object(self.editor, 'guardar_portapapeles_original'), \
+                patch.object(self.editor, '_asegurar_destino'), \
+                patch.object(self.editor, 'copiar_al_portapapeles', return_value=True), \
+                patch.object(self.editor, '_leer_seleccion_mac', return_value='a\n  b\n'):
+            self.editor.inyectar_codigo()
+        # El formateo del usuario al pegar cambió la sangría: se usa lo que quedó.
+        self.assertEqual(self.editor.lineas_actuales, ['a', '  b'])
+
+    def test_ventana_reutilizada_resincroniza_en_vez_de_detenerse(self):
+        self.editor.reutilizar_ventana = True
+        self.editor.editor_actual = 'vsCode'
+        self.editor.lineas_actuales = ['uno', 'dos']
+        self.editor.bloque_actual = ['dos']
+        self.editor.inicio_bloque = 1
+        with patch.object(self.editor, '_asegurar_destino') as asegurar, \
+                patch.object(self.editor, 'identidad_ventana_activa', return_value=1), \
+                patch.object(self.editor, '_escribir_siguiente_linea', side_effect=LineaDesincronizada), \
+                patch.object(self.editor, '_leer_seleccion_mac', return_value='uno\n  dos'):
+            self.editor._editar_bloque_real(float('inf'))
+            self.assertEqual(self.editor.lineas_actuales, ['uno', '  dos'])
+            self.assertIsNone(self.editor.bloque_actual)
+            # Tres desajustes seguidos se toleran; el cuarto detiene la edición.
+            for _ in range(2):
+                self.editor._editar_bloque_real(float('inf'))
+            with self.assertRaises(EditorNoDisponible):
+                self.editor._editar_bloque_real(float('inf'))
+        asegurar.assert_called()
+
+    def test_linea_distinta_en_ventana_propia_del_bot_sigue_deteniendo(self):
+        self.editor.lineas_actuales = ['uno']
+        with patch.object(self.editor, '_leer_linea_completa_mac', return_value='otra'):
+            with self.assertRaises(EditorNoDisponible):
+                self.editor._confirmar_linea_mac(1)
+            self.editor.reutilizar_ventana = True
+            with self.assertRaises(LineaDesincronizada):
+                self.editor._confirmar_linea_mac(1)
+
+    def test_ventana_reutilizada_va_a_la_linea_con_el_panel(self):
+        self.editor.is_mac = True
+        self.editor.cmd_key = 'command'
+        self.editor.reutilizar_ventana = True
+        self.editor.directorio_trabajo = '/tmp/workbreak_prueba'
+        with patch.object(self.editor, 'ejecutar_comando') as comando, \
+                patch.object(self.editor, '_leer_seleccion_mac', return_value=':'), \
+                patch.object(self.editor, '_confirmar_linea_mac') as confirmar:
+            self.editor._ir_a_linea(14)
+        comando.assert_not_called()
+        teclado.hotkey.assert_any_call('option', 'g')
+        teclado.write.assert_called_once_with(':14:1', interval=0.03)
+        confirmar.assert_called_once_with(14)
+
+    def test_ventana_reutilizada_pega_cada_caracter_en_vez_de_teclearlo(self):
+        self.editor.reutilizar_ventana = True
+        with patch.object(self.editor, 'copiar_al_portapapeles', return_value=True) as copiar:
+            EditorInteractor._insertar_caracter(self.editor, '(')
+        copiar.assert_called_once_with('(')
+        teclado.hotkey.assert_called_once_with(self.editor.cmd_key, 'v')
+        teclado.write.assert_not_called()
+
+    def test_movimientos_del_bot_se_anuncian_al_monitor(self):
+        self.editor.monitor_actividad = MagicMock()
+        teclado.position.return_value = (0, 0)
+        self.editor._move_to(4000, 500)
+        self.editor.monitor_actividad.marcar_movimiento_bot.assert_called_once_with(4000, 500)
+        teclado.moveTo.assert_called_once_with(4000, 500, _pause=False)
+
+    def test_inicio_del_editor_lleva_el_mouse_a_su_ventana(self):
+        self.editor.acciones = {'escribir': True, 'click': False, 'scroll': False, 'mover_mouse': True}
+        teclado.position.return_value = (3000, 500)
+        with patch.object(self.editor, '_rectangulo_ventana_editor', return_value=(0, 0, 1000, 800)), \
+                patch.object(self.editor, '_move_to') as mover:
+            self.editor._llevar_mouse_al_editor()
+        mover.assert_called_once()
+        self.editor.acciones['mover_mouse'] = False
+        with patch.object(self.editor, '_move_to') as mover:
+            self.editor._llevar_mouse_al_editor()
+        mover.assert_not_called()
 
     def test_navegacion_nativa_no_escribe_coordenadas_en_el_editor(self):
         self.editor.is_mac = True

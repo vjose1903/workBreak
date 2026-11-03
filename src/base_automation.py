@@ -164,8 +164,11 @@ class BaseAutomation:
         for paso in range(1, pasos + 1):
             self._antes_accion()
             fraccion = paso / pasos
-            pyautogui.moveTo(round(inicio_x + (x - inicio_x) * fraccion),
-                             round(inicio_y + (y - inicio_y) * fraccion), _pause=False)
+            destino = (round(inicio_x + (x - inicio_x) * fraccion), round(inicio_y + (y - inicio_y) * fraccion))
+            marcar = getattr(self.monitor_actividad, 'marcar_movimiento_bot', None)
+            if marcar is not None:
+                marcar(*destino)
+            pyautogui.moveTo(*destino, _pause=False)
             if duration:
                 self._esperar(duration / pasos)
 

@@ -15,6 +15,10 @@ class DetencionSolicitada(BaseException):
     """Detiene la sesión desde la interfaz, incluso durante el debounce."""
 
 
+# Bloqueo de mayúsculas (0x39) y modificadores: ⌘ 0x36/0x37, ⇧ 0x38/0x3C, ⌥ 0x3A/0x3D, ⌃ 0x3B/0x3E, Fn 0x3F.
+TECLAS_IGNORADAS_MAC = frozenset(range(0x36, 0x40))
+
+
 class MonitorActividad:
     def __init__(self, debounce=10.0, margen_inicial=5.0, solicitar_detencion=None, informar_pausa=None):
         self.debounce = debounce
@@ -38,6 +42,8 @@ class MonitorActividad:
         self.solicitar_detencion = solicitar_detencion
         self.informar_pausa = informar_pausa
         self.permitir_limpieza = False
+        self._movimiento_bot = None
+        self._causa = None
 
     def _comprobar_detencion(self):
         if not self.permitir_limpieza and self.solicitar_detencion and self.solicitar_detencion():
@@ -58,7 +64,21 @@ class MonitorActividad:
                 self._version += 1
                 self._condicion.notify_all()
 
-    def registrar(self, identificador=None, pulsada=None):
+    def marcar_movimiento_bot(self, x, y, margen=0.5):
+        """Anuncia el destino de un movimiento del bot antes de enviarlo."""
+        with self._condicion:
+            self._movimiento_bot = (x, y, time.monotonic() + margen)
+
+    def _es_movimiento_bot(self, x, y):
+        # macOS puede reemitir el movimiento del bot (p. ej. al cambiar de pantalla) con
+        # otro proceso de origen: se reconoce por llegar al destino recién anunciado.
+        with self._condicion:
+            if self._movimiento_bot is None:
+                return False
+            destino_x, destino_y, hasta = self._movimiento_bot
+        return time.monotonic() <= hasta and math.dist((x, y), (destino_x, destino_y)) <= 3
+
+    def registrar(self, identificador=None, pulsada=None, causa=None):
         with self._condicion:
             ahora = time.monotonic()
             if identificador is not None:
@@ -70,6 +90,7 @@ class MonitorActividad:
                 return
             self._ultima = ahora
             self._version += 1
+            self._causa = causa or (f"{identificador} pulsada={pulsada}" if identificador else None)
             self._condicion.notify_all()
 
     def comprobar(self):
@@ -80,7 +101,10 @@ class MonitorActividad:
             if (self._detectar_desde is not None and time.monotonic() >= self._detectar_desde
                     and not self._gracia_comprobada):
                 if self._pulsadas_fisicas is not None:
-                    self._pulsadas.update(self._pulsadas_fisicas())
+                    fisicas = self._pulsadas_fisicas()
+                    if fisicas:
+                        self._causa = f"pulsado al terminar el margen inicial: {sorted(fisicas, key=str)}"
+                    self._pulsadas.update(fisicas)
                 self._gracia_comprobada = True
             if (self._detectar_desde is not None and time.monotonic() >= self._detectar_desde
                     and self._version == self._reanudada and self._pulsadas):
@@ -131,6 +155,8 @@ class MonitorActividad:
                 if version != version_informada and ahora - ultimo_log >= 1:
                     if version_informada is None:
                         mensaje = f"Pausa: {contador} segundos de inactividad pendientes"
+                        if self._causa:
+                            mensaje += f" [causa: {self._causa}]"
                     else:
                         mensaje = f"Debounce reiniciado por actividad del usuario: pausa por {self.debounce:g} segundos"
                     version_informada = version
@@ -201,14 +227,13 @@ class MonitorActividad:
 
         self._esta_pulsada = esta_pulsada
         def pulsadas_fisicas():
-            # El bloqueo de mayúsculas no debe interpretarse como actividad mantenida.
-            teclas = [('tecla', codigo) for codigo in range(128) if codigo != 0x39 and esta_pulsada(('tecla', codigo))]
+            # Se omiten el bloqueo de mayúsculas y los modificadores (⌘, ⇧, ⌥, ⌃, Fn): los atajos
+            # del bot (⌘1, ⌘V…) dejan a macOS reportándolos como pulsados aunque nadie los toque.
+            # Un modificador real del usuario se detecta igualmente por sus eventos.
+            teclas = [('tecla', codigo) for codigo in range(128)
+                      if codigo not in TECLAS_IGNORADAS_MAC and esta_pulsada(('tecla', codigo))]
             botones = [('mouse', codigo) for codigo in range(8) if esta_pulsada(('mouse', codigo))]
-            mascaras = (q.kCGEventFlagMaskCommand, q.kCGEventFlagMaskControl, q.kCGEventFlagMaskShift,
-                        q.kCGEventFlagMaskAlternate, q.kCGEventFlagMaskSecondaryFn)
-            modificadores = [('modificador', mascara) for mascara in mascaras
-                             if esta_pulsada(('modificador', mascara))]
-            return teclas + botones + modificadores
+            return teclas + botones
         self._pulsadas_fisicas = pulsadas_fisicas
 
         tipos = (q.kCGEventKeyDown, q.kCGEventKeyUp, q.kCGEventFlagsChanged,
@@ -225,10 +250,15 @@ class MonitorActividad:
                     with self._condicion:
                         self._error = "macOS desactivó la observación de teclado/mouse"
                         self._condicion.notify_all()
-            elif q.CGEventGetIntegerValueField(evento, q.kCGEventSourceUnixProcessID) != os.getpid():
+            elif (pid := q.CGEventGetIntegerValueField(evento, q.kCGEventSourceUnixProcessID)) != os.getpid():
+                causa = f"evento {tipo} del proceso {pid}"
+                if tipo == q.kCGEventMouseMoved:
+                    punto = q.CGEventGetLocation(evento)
+                    if self._es_movimiento_bot(punto.x, punto.y):
+                        return evento
                 if tipo in (q.kCGEventKeyDown, q.kCGEventKeyUp):
                     codigo = q.CGEventGetIntegerValueField(evento, q.kCGKeyboardEventKeycode)
-                    self.registrar(('tecla', codigo), tipo == q.kCGEventKeyDown)
+                    self.registrar(('tecla', codigo), tipo == q.kCGEventKeyDown, causa)
                 elif tipo == q.kCGEventFlagsChanged:
                     codigo = q.CGEventGetIntegerValueField(evento, q.kCGKeyboardEventKeycode)
                     mascaras = {0x36: q.kCGEventFlagMaskCommand, 0x37: q.kCGEventFlagMaskCommand,
@@ -238,15 +268,16 @@ class MonitorActividad:
                                 0x3F: q.kCGEventFlagMaskSecondaryFn}
                     mascara = mascaras.get(codigo)
                     self.registrar(('modificador', mascara) if mascara is not None else None,
-                                   bool(q.CGEventGetFlags(evento) & mascara) if mascara is not None else None)
+                                   bool(q.CGEventGetFlags(evento) & mascara) if mascara is not None else None,
+                                   causa)
                 elif tipo in (q.kCGEventLeftMouseDown, q.kCGEventLeftMouseUp,
                                q.kCGEventRightMouseDown, q.kCGEventRightMouseUp,
                                q.kCGEventOtherMouseDown, q.kCGEventOtherMouseUp):
                     boton = q.CGEventGetIntegerValueField(evento, q.kCGMouseEventButtonNumber)
                     self.registrar(('mouse', boton), tipo in (q.kCGEventLeftMouseDown,
-                                   q.kCGEventRightMouseDown, q.kCGEventOtherMouseDown))
+                                   q.kCGEventRightMouseDown, q.kCGEventOtherMouseDown), causa)
                 else:
-                    self.registrar()
+                    self.registrar(causa=causa)
             return evento
 
         tap = q.CGEventTapCreate(q.kCGSessionEventTap, q.kCGHeadInsertEventTap,
