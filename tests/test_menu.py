@@ -7,10 +7,21 @@ from unittest.mock import patch
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'src'))
 
-from menu import Configuracion, _config_a_dict, _dict_a_config, _cargar_config_previa, cargar_historial
+from menu import Configuracion, _config_a_dict, _dict_a_config, _cargar_config_previa, cargar_historial, guardar_historial
 
 
 class FasesConfigTest(unittest.TestCase):
+    def test_fallo_de_reemplazo_no_destruye_historial_anterior(self):
+        with tempfile.TemporaryDirectory() as carpeta:
+            ruta = Path(carpeta) / 'historial.json'
+            anterior = '[{"tiempo": 10}]'
+            ruta.write_text(anterior, encoding='utf-8')
+            with patch('menu.RUTA_HISTORIAL', ruta), \
+                    patch('menu.os.replace', side_effect=OSError('disco ocupado')):
+                guardar_historial([{'tiempo': 20}])
+            self.assertEqual(ruta.read_text(), anterior)
+            self.assertEqual(list(Path(carpeta).iterdir()), [ruta])
+
     def test_historial_descarta_elementos_y_campos_invalidos(self):
         with tempfile.TemporaryDirectory() as carpeta:
             ruta = Path(carpeta) / 'historial.json'

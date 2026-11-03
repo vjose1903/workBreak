@@ -1,4 +1,6 @@
 import multiprocessing
+import os
+import queue
 from pathlib import Path
 import sys
 import tempfile
@@ -8,7 +10,7 @@ from unittest.mock import MagicMock, patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / 'src'))
 
-from app_controller import ControladorBot
+from app_controller import ControladorBot, ejecutar_proceso_bot
 from menu import Configuracion, _config_a_dict, _dict_a_config
 from main import main
 
@@ -46,6 +48,22 @@ class ContextoCancelado(ContextoSimulado):
 
 
 class ControladorBotTest(unittest.TestCase):
+    def test_worker_solo_web_acepta_directorio_sin_cargarlo(self):
+        registro = _config_a_dict(Configuracion(modo='web', browser='chrome', paginas=['https://example.com']))
+        registro.update(fuente_tipo='directorio', directorio='/fuente/no/disponible')
+        detener = MagicMock()
+        detener.is_set.return_value = False
+        eventos = queue.Queue()
+        modulo = MagicMock()
+        bot = modulo.AutomationBot.return_value
+        bot.gestionar_ejecucion.return_value = 0
+        with tempfile.TemporaryDirectory() as carpeta, \
+                patch('app_controller.signal.signal'), \
+                patch.dict(sys.modules, {'automation_bot': modulo}):
+            ejecutar_proceso_bot(registro, detener, eventos, str(Path(carpeta) / 'bot.log'), os.getppid())
+        bot.gestionar_ejecucion.assert_called_once()
+        self.assertEqual(bot.gestionar_ejecucion.call_args.args[0].modo, 'web')
+
     def test_solo_web_conserva_directorio_sin_escanearlo(self):
         registro = _config_a_dict(Configuracion(modo='web', browser='chrome', paginas=['https://example.com']))
         registro.update(fuente_tipo='directorio', directorio='/fuente/no/disponible',

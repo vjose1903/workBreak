@@ -42,6 +42,9 @@ class AutomationSafetyTest(unittest.TestCase):
         teclado.write.assert_not_called()
 
     def setUp(self):
+        historial = patch('automation_bot.guardar_configuracion')
+        historial.start()
+        self.addCleanup(historial.stop)
         teclado.reset_mock(side_effect=True)
         teclado.size.return_value = (1920, 1080)
         self.editor = EditorInteractor(StatisticsTracker())
@@ -67,6 +70,91 @@ class AutomationSafetyTest(unittest.TestCase):
         rectangulo = patch.object(self.web, 'rectangulo_aplicacion', return_value=(0, 0, 1000, 800))
         rectangulo.start()
         self.addCleanup(rectangulo.stop)
+        for objeto, metodo in [(self.editor, '_verificar_seleccion_linea'),
+                                (self.editor, '_fin_linea'),
+                                (self.web, '_confirmar_destino_web')]:
+            parche = patch.object(objeto, metodo)
+            parche.start()
+            self.addCleanup(parche.stop)
+        ventana = patch.object(self.web, 'identidad_ventana_activa', return_value=1)
+        ventana.start()
+        self.addCleanup(ventana.stop)
+        direccion = patch.object(self.web, '_leer_url_actual', return_value='https://example.com')
+        direccion.start()
+        self.addCleanup(direccion.stop)
+
+    def test_seleccion_con_salto_o_vecina_no_autoriza_reemplazo(self):
+        for seleccion in ['abc\n', 'abc\ndef', 'ab', None]:
+            with self.subTest(seleccion=seleccion), \
+                    patch.object(self.editor, '_leer_seleccion_mac', return_value=seleccion), \
+                    patch.object(self.editor, '_press') as pulsar:
+                with self.assertRaises(EditorNoDisponible):
+                    EditorInteractor._verificar_seleccion_linea(self.editor, 'abc')
+                pulsar.assert_called_once_with('left')
+
+    def test_seleccion_incorrecta_impide_el_primer_caracter(self):
+        self.editor.bloque_actual = ['abc']
+        self.editor.necesita_reposicionar = False
+        with patch.object(self.editor, '_leer_seleccion_mac', return_value='abc\n'), \
+                patch.object(self.editor, '_verificar_seleccion_linea',
+                             side_effect=lambda linea: EditorInteractor._verificar_seleccion_linea(self.editor, linea)), \
+                patch.object(self.editor, '_insertar_caracter') as insertar:
+            with self.assertRaises(EditorNoDisponible):
+                self.editor._escribir_siguiente_linea(float('inf'))
+        insertar.assert_not_called()
+
+    def test_fallo_web_se_propaga_al_controlador(self):
+        with patch.object(self.web, '_configurar_area_mouse', side_effect=RuntimeError('sin área')):
+            with self.assertRaisesRegex(RuntimeError, 'sin área'):
+                self.web.interactuar_con_pagina('https://example.com')
+
+    def test_cambio_de_destino_impide_click_y_scroll(self):
+        with patch.object(self.web, '_confirmar_destino_web', side_effect=RuntimeError('cambió el destino')):
+            for accion in (self.web._click, lambda: self.web._scroll(1)):
+                with self.assertRaises(RuntimeError):
+                    accion()
+        teclado.click.assert_not_called()
+        teclado.scroll.assert_not_called()
+
+    def test_reanudacion_avanza_el_prefijo_logico_sin_usar_fin_visual(self):
+        self.editor.inicio_bloque = 4
+        self.editor.indice_linea = 1
+        self.editor.desplazamiento = 5
+        with patch.object(self.editor, '_confirmar_linea_mac') as confirmar, \
+                patch.object(self.editor, '_press') as pulsar:
+            EditorInteractor._fin_linea(self.editor)
+        confirmar.assert_called_once_with(6)
+        self.assertEqual(pulsar.call_args_list, [unittest.mock.call('right')] * 5)
+
+    def test_cambio_de_url_o_ventana_cancela_los_clicks(self):
+        self.web._ventana_web = 1
+        self.web._url_interaccion = 'https://example.com'
+        with patch.object(self.web, '_leer_url_actual', return_value='https://otra.example'):
+            with self.assertRaises(RuntimeError):
+                WebInteractor._confirmar_destino_web(self.web)
+        with patch.object(self.web, 'identidad_ventana_activa', return_value=2), \
+                patch.object(self.web, '_leer_url_actual') as leer:
+            with self.assertRaises(RuntimeError):
+                WebInteractor._confirmar_destino_web(self.web)
+            leer.assert_not_called()
+
+    def test_fuente_fallida_conserva_codigo_y_no_pega(self):
+        self.editor._portapapeles_original = 'usuario'
+        self.editor.lineas_actuales = ['codigo anterior']
+        with patch.object(self.editor.fuente_codigo, 'obtener_codigo', side_effect=ValueError('sin fuente')):
+            with self.assertRaises(EditorNoDisponible):
+                self.editor.inyectar_codigo()
+        self.assertEqual(self.editor.lineas_actuales, ['codigo anterior'])
+        teclado.hotkey.assert_not_called()
+
+    def test_guardar_portapapeles_para_web_no_requiere_inyeccion(self):
+        with patch.object(self.editor, 'leer_portapapeles', return_value='texto del usuario'):
+            self.editor.guardar_portapapeles_original()
+        self.editor.portapapeles_bot['ultimo'] = 'https://example.com'
+        with patch.object(self.editor, 'leer_portapapeles', return_value='https://example.com'), \
+                patch.object(self.editor, 'copiar_al_portapapeles', return_value=True) as copiar:
+            self.editor.restaurar_portapapeles()
+        copiar.assert_called_once_with('texto del usuario')
 
     def test_foco_anterior_no_evita_reactivacion(self):
         with patch.object(self.editor, 'activar_aplicacion', return_value=False) as activar:
@@ -552,7 +640,7 @@ class AutomationSafetyTest(unittest.TestCase):
                 self.assertNotIn(unittest.mock.call('enter'), teclado.press.call_args_list)
                 self.assertNotIn(unittest.mock.call('backspace'), teclado.press.call_args_list)
 
-    def test_restauracion_mac_incluye_la_sangria_original(self):
+    def test_reescritura_mac_conserva_sangria_sin_segundo_reemplazo(self):
         self.editor.is_mac = True
         self.editor.is_windows = False
         self.editor.cmd_key = 'command'
@@ -584,10 +672,22 @@ class AutomationSafetyTest(unittest.TestCase):
         with patch.object(self.editor, '_asegurar_destino'), \
                 patch.object(self.editor, '_queda_tiempo_editor', return_value=True), \
                 patch.object(self.editor, 'copiar_al_portapapeles', side_effect=copiar), \
-                patch.object(self.editor, '_hotkey', side_effect=hotkey), \
+                patch.object(self.editor, '_hotkey', side_effect=hotkey) as atajo, \
                 patch.object(self.editor, '_write', side_effect=escribir):
             self.editor._escribir_siguiente_linea(float('inf'))
         self.assertEqual(estado['texto'], '    x')
+        self.assertNotIn(unittest.mock.call('command', 'left'), atajo.call_args_list)
+        self.assertNotIn(unittest.mock.call('command', 'v'), atajo.call_args_list)
+
+    def test_lineas_vacias_no_seleccionan_ni_borran_el_salto(self):
+        self.editor.bloque_actual = ['', '   ', 'const siguiente = 1;']
+        with patch.object(self.editor, '_limpiar_linea_actual') as seleccionar, \
+                patch.object(self.editor, '_ir_a_linea') as ir:
+            self.editor._escribir_siguiente_linea(float('inf'))
+            self.editor._escribir_siguiente_linea(float('inf'))
+        seleccionar.assert_not_called()
+        ir.assert_not_called()
+        self.assertEqual(self.editor.indice_linea, 2)
 
     def test_no_abre_paginas_con_limite_global_agotado(self):
         self.web.set_paginas(['https://example.com', 'https://example.org'])

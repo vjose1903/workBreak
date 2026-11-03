@@ -68,6 +68,28 @@ class RealProjectSourceTest(unittest.TestCase):
         fuente.archivos = fuente.archivos[:1]
         self.assertEqual(fuente.obtener_codigo(), fuente.obtener_codigo())
 
+    def test_si_otro_archivo_desaparece_reutiliza_el_anterior(self):
+        fuente = RealProjectSource(self.raiz)
+        codigo = fuente.obtener_codigo()
+        for archivo in fuente.archivos:
+            if archivo != fuente._ultimo_archivo:
+                archivo.unlink()
+        self.assertEqual(fuente.obtener_codigo(), codigo)
+
+    def test_si_no_queda_fuente_lanza_error_en_lugar_de_codigo_falso(self):
+        fuente = RealProjectSource(self.raiz)
+        for archivo in fuente.archivos:
+            archivo.unlink()
+        with self.assertRaises(ValueError):
+            fuente.obtener_codigo()
+
+    def test_revalida_archivos_modificados_despues_del_escaneo(self):
+        fuente = RealProjectSource(self.raiz)
+        for archivo in fuente.archivos:
+            archivo.write_text('archivo ahora vacío de código\n')
+        with self.assertRaises(ValueError):
+            fuente.obtener_codigo()
+
     def test_directorio_invalido_lanza_error(self):
         with self.assertRaises(ValueError):
             RealProjectSource("/ruta/que/no/existe-xyz")

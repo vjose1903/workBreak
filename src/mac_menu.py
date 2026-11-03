@@ -13,11 +13,12 @@ from AppKit import (
     NSAlert, NSApplication, NSApplicationActivationPolicyAccessory, NSFont, NSImage, NSMenu,
     NSMenuItem, NSModalPanelRunLoopMode, NSOpenPanel, NSScrollView, NSStatusBar,
     NSTextField, NSTextView, NSVariableStatusItemLength, NSWorkspace,
+    NSButton, NSColor, NSStepper, NSSwitch, NSTableColumn, NSTableView, NSView,
 )
 from Foundation import NSObject, NSRunLoop, NSRunLoopCommonModes, NSTimer
 
 from app_controller import ControladorBot
-from menu import Configuracion, FASES_EDITOR, MODOS_INTERACCION, NAVEGADORES_VALIDOS, _config_a_dict, cargar_historial
+from menu import Configuracion, FASES_EDITOR, MODOS_INTERACCION, NAVEGADORES_VALIDOS, formatear_tiempo, _config_a_dict, cargar_historial
 
 
 def normalizar_webs(texto):
@@ -37,6 +38,277 @@ def normalizar_webs(texto):
         if url not in paginas:
             paginas.append(url)
     return paginas
+
+
+class DialogoTiempo(NSObject):
+    @objc.python_method
+    def preparar(self, minutos):
+        self.minutos = minutos
+        self.alerta = NSAlert.alloc().init()
+        self.alerta.setMessageText_('Tiempo de ejecución')
+        self.alerta.setInformativeText_('Define una duración o activa el tiempo indefinido.')
+        icono = NSImage.alloc().initWithContentsOfFile_(str(Path(__file__).resolve().parent.parent / 'assets' / 'icon.svg'))
+        if icono is not None:
+            self.alerta.setIcon_(icono)
+        guardar = self.alerta.addButtonWithTitle_('Guardar')
+        guardar.setTarget_(self)
+        guardar.setAction_('guardar:')
+        self.alerta.addButtonWithTitle_('Cancelar')
+        segundos = round((minutos or 0) * 60)
+        valores = [segundos // 3600, segundos % 3600 // 60, segundos % 60]
+        vista = NSView.alloc().initWithFrame_(((0, 0), (440, 180)))
+        etiqueta_indefinido = NSTextField.labelWithString_('Tiempo indefinido')
+        etiqueta_indefinido.setFrame_(((0, 150), (260, 22)))
+        etiqueta_indefinido.setFont_(NSFont.boldSystemFontOfSize_(13))
+        vista.addSubview_(etiqueta_indefinido)
+        self.indefinido = NSSwitch.alloc().initWithFrame_(((390, 146), (45, 28)))
+        self.indefinido.setState_(0 if minutos else 1)
+        self.indefinido.setTarget_(self)
+        self.indefinido.setAction_('alternarIndefinido:')
+        self.indefinido.setAccessibilityLabel_('Tiempo indefinido')
+        vista.addSubview_(self.indefinido)
+        self.campos, self.controles = [], []
+        for indice, (titulo, valor) in enumerate(zip(('Horas', 'Minutos', 'Segundos'), valores)):
+            x = indice * 150
+            etiqueta = NSTextField.labelWithString_(titulo)
+            etiqueta.setFrame_(((x, 105), (125, 20)))
+            etiqueta.setTextColor_(NSColor.secondaryLabelColor())
+            vista.addSubview_(etiqueta)
+            campo = NSTextField.alloc().initWithFrame_(((x, 40), (106, 58)))
+            campo.setFont_(NSFont.monospacedDigitSystemFontOfSize_weight_(36, 0))
+            campo.setTextColor_(NSColor.controlAccentColor())
+            campo.setAlignment_(2)
+            campo.setStringValue_(f'{valor:02d}')
+            campo.setAccessibilityLabel_(titulo)
+            campo.setDelegate_(self)
+            campo.setTag_(indice)
+            vista.addSubview_(campo)
+            control = NSStepper.alloc().initWithFrame_(((x + 112, 52), (20, 30)))
+            control.setMinValue_(0)
+            control.setMaxValue_(max(9999, valor) if indice == 0 else 59)
+            control.setIncrement_(1)
+            control.setIntegerValue_(valor)
+            control.setValueWraps_(False)
+            control.setTag_(indice)
+            control.setTarget_(self)
+            control.setAction_('cambiar:')
+            control.setAccessibilityLabel_(titulo)
+            vista.addSubview_(control)
+            self.campos.append(campo)
+            self.controles.append(control)
+        self.error = NSTextField.labelWithString_('')
+        self.error.setFrame_(((0, 0), (440, 32)))
+        self.error.setTextColor_(NSColor.systemRedColor())
+        vista.addSubview_(self.error)
+        self.alerta.setAccessoryView_(vista)
+        self.alternarIndefinido_(self.indefinido)
+        self.alerta.window().setInitialFirstResponder_(self.indefinido if self.indefinido.state() else self.campos[0])
+
+    def alternarIndefinido_(self, sender):
+        activo = bool(self.indefinido.state())
+        if activo:
+            self.alerta.window().makeFirstResponder_(self.indefinido)
+        for campo, control in zip(self.campos, self.controles):
+            if activo:
+                campo.setStringValue_('00')
+                control.setIntegerValue_(0)
+            campo.setEnabled_(not activo)
+            campo.setTextColor_(NSColor.disabledControlTextColor() if activo else NSColor.controlAccentColor())
+            control.setEnabled_(not activo)
+        self.error.setStringValue_('')
+
+    def controlTextDidChange_(self, notificacion):
+        campo = notificacion.object()
+        texto = campo.stringValue()
+        control = self.controles[campo.tag()]
+        if texto.isdecimal() and int(texto) <= control.maxValue():
+            control.setIntegerValue_(int(texto))
+
+    def cambiar_(self, sender):
+        self.campos[sender.tag()].setStringValue_(f'{sender.integerValue():02d}')
+        self.error.setStringValue_('')
+
+    def guardar_(self, sender):
+        if self.indefinido.state():
+            self.minutos = None
+            NSApplication.sharedApplication().stopModalWithCode_(1000)
+            return
+        valores = []
+        for campo, control in zip(self.campos, self.controles):
+            texto = campo.stringValue().strip()
+            if not texto.isdecimal() or int(texto) > control.maxValue():
+                self.error.setStringValue_('Introduce horas válidas y minutos/segundos entre 00 y 59.')
+                return
+            valores.append(int(texto))
+        segundos = valores[0] * 3600 + valores[1] * 60 + valores[2]
+        if not segundos:
+            self.error.setStringValue_('Define un tiempo mayor que cero o activa Tiempo indefinido.')
+            return
+        self.minutos = segundos / 60 if segundos else None
+        NSApplication.sharedApplication().stopModalWithCode_(1000)
+
+    @objc.python_method
+    def mostrar(self):
+        NSApplication.sharedApplication().activateIgnoringOtherApps_(True)
+        return self.alerta.runModal() == 1000
+
+
+class DialogoWebs(NSObject):
+    @objc.python_method
+    def preparar(self, paginas, nombres=None):
+        self.paginas = list(paginas)
+        self.nombres = {url: (nombres or {}).get(url) or urlsplit(url).hostname or url for url in paginas}
+        self.alerta = NSAlert.alloc().init()
+        self.alerta.setMessageText_('Webs del bot')
+        icono = NSImage.alloc().initWithContentsOfFile_(str(Path(__file__).resolve().parent.parent / 'assets' / 'icon.svg'))
+        if icono is not None:
+            self.alerta.setIcon_(icono)
+        self.alerta.setInformativeText_('Identifica cada web con un nombre y agrega su dirección.')
+        guardar = self.alerta.addButtonWithTitle_('Guardar')
+        guardar.setTarget_(self)
+        guardar.setAction_('guardar:')
+        self.alerta.addButtonWithTitle_('Cancelar')
+        vista = NSView.alloc().initWithFrame_(((0, 0), (760, 390)))
+        self.nombre = NSTextField.alloc().initWithFrame_(((0, 335), (222, 32)))
+        self.nombre.setPlaceholderString_('Ej. Panel de administración')
+        self.nombre.setFont_(NSFont.systemFontOfSize_(14))
+        self.nombre.setAccessibilityLabel_('Nombre de la web, obligatorio')
+        vista.addSubview_(self.nombre)
+        for titulo, x, ancho in [('Nombre *', 0, 222), ('Dirección web *', 238, 402)]:
+            etiqueta = NSTextField.labelWithString_(titulo)
+            etiqueta.setFrame_(((x, 372), (ancho, 18)))
+            etiqueta.setFont_(NSFont.boldSystemFontOfSize_(12))
+            vista.addSubview_(etiqueta)
+        self.campo = NSTextField.alloc().initWithFrame_(((238, 335), (402, 32)))
+        self.campo.setPlaceholderString_('https://ejemplo.com')
+        self.campo.setFont_(NSFont.systemFontOfSize_(14))
+        self.campo.setAccessibilityLabel_('Dirección web')
+        self.campo.setTarget_(self)
+        self.campo.setAction_('agregar:')
+        vista.addSubview_(self.campo)
+        agregar = NSButton.alloc().initWithFrame_(((652, 335), (108, 32)))
+        agregar.setTitle_('Agregar')
+        agregar.setBezelStyle_(1)
+        agregar.setTarget_(self)
+        agregar.setAction_('agregar:')
+        vista.addSubview_(agregar)
+        self.error = NSTextField.labelWithString_('')
+        self.error.setFrame_(((0, 297), (760, 30)))
+        self.error.setTextColor_(NSColor.systemRedColor())
+        vista.addSubview_(self.error)
+        scroll = NSScrollView.alloc().initWithFrame_(((0, 52), (760, 238)))
+        scroll.setHasVerticalScroller_(True)
+        scroll.setHasHorizontalScroller_(True)
+        scroll.setAutohidesScrollers_(True)
+        scroll.setWantsLayer_(True)
+        scroll.layer().setCornerRadius_(8)
+        scroll.layer().setMasksToBounds_(True)
+        self.tabla = NSTableView.alloc().initWithFrame_(scroll.bounds())
+        columna = NSTableColumn.alloc().initWithIdentifier_('url')
+        columna_nombre = NSTableColumn.alloc().initWithIdentifier_('nombre')
+        columna_nombre.setTitle_('Nombre')
+        columna_nombre.setWidth_(222)
+        columna_nombre.dataCell().setFont_(NSFont.boldSystemFontOfSize_(13))
+        self.tabla.addTableColumn_(columna_nombre)
+        columna.setTitle_('Dirección web')
+        columna.setWidth_(518)
+        columna.dataCell().setFont_(NSFont.systemFontOfSize_(13))
+        self.columna_url = columna
+        self.tabla.setColumnAutoresizingStyle_(0)
+        self.tabla.setRowHeight_(36)
+        self.tabla.setUsesAlternatingRowBackgroundColors_(True)
+        self.tabla.setAccessibilityLabel_('Direcciones web configuradas')
+        self.tabla.addTableColumn_(columna)
+        self.tabla.setDataSource_(self)
+        self.tabla.setDelegate_(self)
+        scroll.setDocumentView_(self.tabla)
+        vista.addSubview_(scroll)
+        self.quitar = NSButton.alloc().initWithFrame_(((0, 6), (165, 32)))
+        self.quitar.setTitle_('Quitar seleccionada')
+        self.quitar.setBezelStyle_(1)
+        self.quitar.setTarget_(self)
+        self.quitar.setAction_('quitar:')
+        self.quitar.setEnabled_(False)
+        vista.addSubview_(self.quitar)
+        self.contador = NSTextField.labelWithString_('')
+        self.contador.setFrame_(((185, 12), (575, 20)))
+        vista.addSubview_(self.contador)
+        self.alerta.setAccessoryView_(vista)
+        self.alerta.window().setInitialFirstResponder_(self.nombre)
+        self.refrescar()
+
+    def numberOfRowsInTableView_(self, tabla):
+        return len(self.paginas)
+
+    def tableView_objectValueForTableColumn_row_(self, tabla, columna, fila):
+        url = self.paginas[fila]
+        return self.nombres[url] if columna.identifier() == 'nombre' else url
+
+    def tableViewSelectionDidChange_(self, notificacion):
+        self.quitar.setEnabled_(self.tabla.selectedRow() >= 0)
+
+    @objc.python_method
+    def refrescar(self):
+        self.columna_url.setWidth_(max(518, max((len(url) * 8 for url in self.paginas), default=0)))
+        self.tabla.reloadData()
+        self.quitar.setEnabled_(self.tabla.selectedRow() >= 0)
+        cantidad = len(self.paginas)
+        self.contador.setTextColor_(NSColor.secondaryLabelColor())
+        self.contador.setStringValue_(f'{cantidad} dirección configurada' if cantidad == 1 else f'{cantidad} direcciones configuradas')
+
+    @objc.python_method
+    def agregar_pendiente(self):
+        texto = self.campo.stringValue().strip()
+        nombre = self.nombre.stringValue().strip()
+        if not texto and not nombre:
+            return True
+        if not nombre or not texto:
+            self.error.setStringValue_('Completa el nombre y la dirección web. Ambos son obligatorios.')
+            return False
+        try:
+            nuevas = normalizar_webs(texto)
+        except ValueError as error:
+            self.error.setStringValue_(str(error))
+            return False
+        if len(nuevas) != 1:
+            self.error.setStringValue_('Agrega una sola dirección por nombre.')
+            return False
+        url = nuevas[0]
+        if url in self.paginas:
+            self.error.setStringValue_('Esta dirección ya está en la lista.')
+            return False
+        self.paginas.append(url)
+        self.nombres[url] = nombre
+        self.nombre.setStringValue_('')
+        self.campo.setStringValue_('')
+        self.error.setStringValue_('')
+        self.refrescar()
+        return True
+
+    def agregar_(self, sender):
+        if not self.nombre.stringValue().strip() and not self.campo.stringValue().strip():
+            self.error.setStringValue_('Completa el nombre y la dirección web. Ambos son obligatorios.')
+            return
+        if self.agregar_pendiente():
+            self.alerta.window().makeFirstResponder_(self.nombre)
+
+    def quitar_(self, sender):
+        fila = self.tabla.selectedRow()
+        if 0 <= fila < len(self.paginas):
+            self.nombres.pop(self.paginas[fila], None)
+            del self.paginas[fila]
+            self.error.setStringValue_('')
+            self.tabla.deselectAll_(None)
+            self.refrescar()
+
+    def guardar_(self, sender):
+        if self.agregar_pendiente():
+            NSApplication.sharedApplication().stopModalWithCode_(1000)
+
+    @objc.python_method
+    def mostrar(self):
+        NSApplication.sharedApplication().activateIgnoringOtherApps_(True)
+        return list(self.paginas) if self.alerta.runModal() == 1000 else None
 
 
 class MenuWorkBreak(NSObject):
@@ -65,6 +337,19 @@ class MenuWorkBreak(NSObject):
 
     @objc.python_method
     def preparar(self):
+        # Los diálogos necesitan el menú Edición para los atajos del responder nativo.
+        aplicacion = NSApplication.sharedApplication()
+        if aplicacion.mainMenu() is None:
+            principal = NSMenu.alloc().initWithTitle_('WorkBreak')
+            edicion = NSMenu.alloc().initWithTitle_('Edición')
+            entrada = NSMenuItem.alloc().initWithTitle_action_keyEquivalent_('Edición', None, '')
+            entrada.setSubmenu_(edicion)
+            principal.addItem_(entrada)
+            for titulo, accion, tecla in [('Deshacer', 'undo:', 'z'), ('Cortar', 'cut:', 'x'),
+                                          ('Copiar', 'copy:', 'c'), ('Pegar', 'paste:', 'v'),
+                                          ('Seleccionar todo', 'selectAll:', 'a')]:
+                edicion.addItem_(NSMenuItem.alloc().initWithTitle_action_keyEquivalent_(titulo, accion, tecla))
+            aplicacion.setMainMenu_(principal)
         if hasattr(NSImage, 'imageWithSystemSymbolName_accessibilityDescription_'):
             imagen = NSImage.imageWithSystemSymbolName_accessibilityDescription_('w.square.fill', 'WorkBreak')
             if imagen is not None:
@@ -126,13 +411,18 @@ class MenuWorkBreak(NSObject):
         for clave, titulo in MODOS_INTERACCION.items():
             self.item(modos, titulo, 'modo:' + clave, self.config.get('modo', 'ambos') == clave)
 
-        navegadores, item = self.submenu(menu, 'Navegador')
+        solo_editor = self.config.get('modo') == 'editor'
+        motivo_web = ' — Configurado solo editor' if solo_editor else ''
+        navegadores, item = self.submenu(menu, 'Navegador' + motivo_web)
+        self.config_web_items = [item]
         self.config_items.append(item)
         self.item(navegadores, 'Ninguno', 'browser:', self.config.get('browser') is None)
         for navegador in NAVEGADORES_VALIDOS:
             self.item(navegadores, navegador.capitalize(), 'browser:' + navegador,
                       self.config.get('browser') == navegador)
-        self.config_items.append(self.item(menu, f"Webs… ({len(self.config.get('paginas', []))})", 'webs'))
+        item_webs = self.item(menu, f"Webs… ({len(self.config.get('paginas', []))})" + motivo_web, 'webs')
+        self.config_items.append(item_webs)
+        self.config_web_items.append(item_webs)
 
         fuente, item = self.submenu(menu, 'Fuente de código')
         self.config_items.append(item)
@@ -144,7 +434,7 @@ class MenuWorkBreak(NSObject):
             self.item(fuente, Path(ruta).name, 'fuente:directorio', marcado=True).setToolTip_(ruta)
 
         tiempo = self.config.get('tiempo')
-        etiqueta = f'{tiempo} minutos' if tiempo else 'Indefinido'
+        etiqueta = formatear_tiempo(tiempo)
         self.config_items.append(self.item(menu, f'Tiempo… ({etiqueta})', 'tiempo'))
         fases, item = self.submenu(menu, 'Fases del editor')
         self.config_items.append(item)
@@ -161,7 +451,7 @@ class MenuWorkBreak(NSObject):
             titulo = (f"{MODOS_INTERACCION[registro.get('modo', 'ambos')]} · "
                       f"{registro.get('browser') or 'Sin navegador'} · "
                       f"{FASES_EDITOR.get(registro.get('fases'), FASES_EDITOR['ambas'])} · "
-                      f"{str(tiempo) + ' min' if tiempo else 'Indefinido'}")
+                      f"{formatear_tiempo(tiempo)}")
             self.item(recientes, titulo, f'historial:{indice}').setToolTip_(
                 registro.get('fuente_descripcion', '') + ' — ' + str(registro.get('fecha', '')))
 
@@ -214,6 +504,8 @@ class MenuWorkBreak(NSObject):
         self.detener_item.setEnabled_(activo and not self.controlador.deteniendo)
         for item in self.config_items:
             item.setEnabled_(not activo and not self.saliendo)
+        for item in self.config_web_items:
+            item.setEnabled_(not activo and not self.saliendo and self.config.get('modo') != 'editor')
         self.salir_item.setTitle_('Deteniendo antes de salir…' if self.saliendo else 'Salir de WorkBreak')
         self.salir_item.setEnabled_(not self.saliendo)
         if self.saliendo and not activo:
@@ -285,18 +577,17 @@ class MenuWorkBreak(NSObject):
             self.config.setdefault('fases', 'ambas')
             self.config.setdefault('modo', 'ambos')
         elif comando == 'webs':
-            texto = self.preguntar('Webs del bot', 'Separa las direcciones por comas.',
-                                   ', '.join(self.config.get('paginas', [])))
-            if texto is not None:
-                self.config['paginas'] = normalizar_webs(texto)
+            dialogo = DialogoWebs.alloc().init()
+            dialogo.preparar(self.config.get('paginas', []), self.config.get('nombres_web', {}))
+            paginas = dialogo.mostrar()
+            if paginas is not None:
+                self.config['paginas'] = paginas
+                self.config['nombres_web'] = dict(dialogo.nombres)
         elif comando == 'tiempo':
-            texto = self.preguntar('Tiempo de ejecución', 'Minutos. Vacío o 0 significa indefinido.',
-                                   str(self.config.get('tiempo') or ''))
-            if texto is not None:
-                texto = texto.strip()
-                if texto and (not texto.isdecimal() or int(texto) < 0):
-                    raise ValueError('Introduce un número entero de minutos, 0 o deja el campo vacío.')
-                self.config['tiempo'] = int(texto) if texto and int(texto) else None
+            dialogo = DialogoTiempo.alloc().init()
+            dialogo.preparar(self.config.get('tiempo'))
+            if dialogo.mostrar():
+                self.config['tiempo'] = dialogo.minutos
         elif comando == 'fuente:aleatorio':
             self.config.update(fuente_tipo='aleatorio', directorio=None,
                                fuente_descripcion='Código React/TS aleatorio')

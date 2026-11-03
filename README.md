@@ -55,7 +55,7 @@ python src/main.py
 
 Haz clic en la **W** para configurar navegador, webs, fuente de código, tiempo, fases y configuraciones recientes. El bot no empieza hasta pulsar **Iniciar bot**. Mientras trabaja, las opciones de configuración quedan bloqueadas; **Detener bot**, **Estado y estadísticas**, **Ver registro** y **Salir de WorkBreak** permanecen disponibles.
 
-El menú muestra la fase actual, las pausas por actividad y su cuenta atrás. **Detener bot** interrumpe también el debounce. **Salir** solicita una detención ordenada y espera la limpieza antes de cerrar. Solo se admite una sesión por interfaz y una interfaz por checkout. El código real se escanea en el proceso del bot, para mantener disponible el menú durante la carga.
+El menú muestra la fase actual, las pausas por actividad y su cuenta atrás. **Detener bot** interrumpe también el debounce. **Salir** solicita una detención ordenada y espera la limpieza antes de cerrar. Solo se admite una interfaz por checkout y una sesión de automatización a la vez, compartiendo el bloqueo con Terminal y los argumentos CLI. El código real se escanea en el proceso del bot, para mantener disponible el menú durante la carga.
 
 La automatización se ejecuta en un proceso separado creado con `spawn`. La interfaz permanece en el hilo principal de AppKit. El registro se guarda en `~/Library/Logs/WorkBreak/workbreak.log`, con rotación. La configuración se sigue guardando en el historial existente al iniciar una sesión válida.
 
@@ -81,7 +81,7 @@ El menú permite configurar:
 * **Fases del editor** (opción 6 del menú de terminal): escritura y mouse (por defecto), solo escritura o solo mouse. La elección se muestra en el resumen y se conserva en el historial. Las configuraciones antiguas usan ambas fases.
 * **Usar configuración previa**: carga una de las configuraciones de las últimas 5 sesiones (guardadas localmente en `config_history.json`). Se auto-selecciona la más reciente; también puedes elegir otra por número.
 
-El archivo `config_history.json` se crea automáticamente en la raíz del proyecto si no existe y conserva las últimas 5 configuraciones usadas.
+El archivo `config_history.json` se crea al guardar la primera sesión en la raíz del proyecto y conserva las últimas 5 configuraciones usadas. Las actualizaciones reemplazan el archivo de forma atómica para conservar la versión anterior si falla la escritura.
 
 En los tres modos se pega inicialmente el código completo. En solo mouse se conserva ese contenido y se realizan movimientos y scroll sin reescribir fragmentos. En solo escritura se omiten las fases de mouse. Esta selección se aplica al editor; la navegación web conserva su configuración independiente. Para iniciar, pulsa **Iniciar bot** en la W, o usa la opción 7 en el menú de terminal.
 
@@ -108,7 +108,7 @@ python src/main.py -browser chrome -web "https://google.com,https://chat.openai.
    * Al pasar a la fase de clics, guarda el estado; al volver a escribir, se reposiciona en la línea pendiente. En macOS usa `Option+G`, comprueba por portapapeles el contenido del panel antes de enviar las coordenadas y compara la línea de destino con el código cargado antes de continuar. Si no puede confirmarlo, se detiene sin editar. En Windows usa `Ctrl+G`.
    * La **fase de mouse** sube al inicio del archivo (`Ctrl+Home` en Windows, `Cmd+↑` en macOS), hace clic sobre el editor para enfocarlo y hace scroll arriba/abajo sobre el código. La vuelta a la línea pendiente se hace una sola vez, cuando se reanuda la escritura.
    * Cuando termina de reescribir un bloque completo, **toma otro bloque o línea** del código.
-   * El tamaño del bloque se adapta al tamaño del archivo. Navega una sola vez a cada línea antes de reescribirla. Al terminarla, repone su texto exacto por portapapeles desde el inicio completo de la línea, incluyendo la sangría, sin volver a abrir Ir a línea. Así corrige posibles inserciones del autocompletado sin duplicar los espacios iniciales.
+   * El tamaño del bloque se adapta al tamaño del archivo. Navega una sola vez a cada línea y verifica que la selección coincida exactamente con su contenido antes de reemplazarla, sin incluir el salto de línea. Al terminar comprueba el resultado; no realiza un segundo reemplazo para restaurar la sangría. Para continuar una línea parcial, verifica el texto y avanza exactamente su longitud desde la columna 1, independientemente del ajuste visual.
    * Solo elige líneas con caracteres ASCII imprimibles. Los atajos de macOS se envían mediante Quartz con modificadores explícitos, sin `Fn`. El texto de las líneas se inserta por portapapeles. En Windows libera Ctrl/Shift/Alt tras las secuencias de edición.
    Al completar cada bloque, el archivo queda exactamente igual al original para las capturas. Las fases de escritura y mouse tienen duraciones variables y distintas entre sí.
 3. Si se especifican URLs, abre el navegador y navega por ellas, realizando clics aleatorios dentro de una zona interior de la ventana. Si hay webs configuradas, las fases del editor y del navegador se **alternan en turnos acotados** (editor ~30-90s, navegador ~30-60s). El recorrido conserva las páginas pendientes entre turnos, aunque la lista no quepa en uno solo. Los movimientos del editor también se limitan a una zona interior; si no se puede confirmar una zona visible suficiente, se cancela la interacción.

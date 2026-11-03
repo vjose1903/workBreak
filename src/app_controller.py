@@ -11,7 +11,7 @@ import signal
 import time
 from collections import deque
 
-from menu import _dict_a_config, _registro_valido, guardar_configuracion
+from menu import _dict_a_config, _registro_valido
 from user_activity import DetencionSolicitada
 
 
@@ -81,13 +81,12 @@ def ejecutar_proceso_bot(registro, detener, eventos, ruta_log, pid_interfaz):
             return
         informar('iniciando')
         config = _dict_a_config(registro, comprobar_cancelacion=comprobar_cancelacion)
-        if registro.get('fuente_tipo') == 'directorio' and not hasattr(config.fuente, 'directorio'):
+        if config.modo != 'web' and registro.get('fuente_tipo') == 'directorio' and not hasattr(config.fuente, 'directorio'):
             raise ValueError('No se pudo cargar el directorio elegido. Selecciona otro directorio.')
         if cancelado():
             codigo = 0
             return
         from automation_bot import AutomationBot
-        guardar_configuracion(config)
         bot = AutomationBot(solicitar_detencion=cancelado, informar_estado=informar)
         codigo = bot.gestionar_ejecucion(config)
     except DetencionSolicitada:

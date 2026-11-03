@@ -215,6 +215,21 @@ class BaseAutomation:
                 return tuple(map(int, numeros))
         return None
 
+    def identidad_ventana_activa(self):
+        """Identificador nativo de la ventana superior, sin cambiar el foco."""
+        self._antes_accion()
+        if self.is_windows:
+            import win32gui
+            return win32gui.GetForegroundWindow()
+        if self.is_mac:
+            import Quartz as q
+            ventanas = q.CGWindowListCopyWindowInfo(
+                q.kCGWindowListOptionOnScreenOnly, q.kCGNullWindowID)
+            for ventana in ventanas or []:
+                if ventana.get('kCGWindowLayer') == 0:
+                    return ventana.get('kCGWindowNumber')
+        raise RuntimeError('No se pudo identificar la ventana activa')
+
     # ------------------------------------------------------------
     # Tiempo (time.monotonic)
     # ------------------------------------------------------------

@@ -1,5 +1,8 @@
 import json
 import logging
+import math
+import os
+import tempfile
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
@@ -21,6 +24,13 @@ FASES_EDITOR = {
 RUTA_HISTORIAL = Path(__file__).resolve().parent.parent / "config_history.json"
 
 
+def formatear_tiempo(minutos):
+    if not minutos:
+        return 'Indefinido'
+    segundos = round(minutos * 60)
+    return f'{segundos // 3600:02d}:{segundos % 3600 // 60:02d}:{segundos % 60:02d}'
+
+
 @dataclass
 class Configuracion:
     """Configuración completa del bot, construida desde el menú interactivo o los args CLI."""
@@ -29,10 +39,11 @@ class Configuracion:
     paginas: List[str] = field(default_factory=list)
     fuente: Any = None
     fuente_descripcion: str = "Código React/TS aleatorio"
-    tiempo: Optional[int] = None
+    tiempo: Optional[float] = None
     fases: str = "ambas"
     modo: str = "ambos"
     directorio: Optional[str] = None
+    nombres_web: dict = field(default_factory=dict)
 
     def __post_init__(self):
         if self.modo not in MODOS_INTERACCION:
@@ -43,7 +54,7 @@ class Configuracion:
             self.fases = "ambas"
 
     def resumen(self) -> str:
-        tiempo_str = f"{self.tiempo} min" if self.tiempo else "indefinido"
+        tiempo_str = formatear_tiempo(self.tiempo)
         return (
             f"  Interacción   : {MODOS_INTERACCION[self.modo]}\n"
             f"  Editor        : {self.editor or 'NO DEFINIDO'}\n"
@@ -185,6 +196,7 @@ def _config_a_dict(config: Configuracion) -> dict:
         "editor": config.editor,
         "browser": config.browser,
         "paginas": list(config.paginas),
+        "nombres_web": {url: nombre for url, nombre in config.nombres_web.items() if url in config.paginas},
         "fuente_tipo": "directorio" if es_directorio else "aleatorio",
         "fuente_descripcion": config.fuente_descripcion,
         "directorio": directorio,
@@ -214,6 +226,7 @@ def _dict_a_config(d: dict, comprobar_cancelacion=None) -> Configuracion:
     return Configuracion(
         browser=d.get("browser"),
         paginas=[p for p in (d.get("paginas") or []) if isinstance(p, str)],
+        nombres_web=dict(d.get("nombres_web", {})),
         fuente=fuente,
         fuente_descripcion=descripcion,
         tiempo=d.get("tiempo"),
@@ -232,8 +245,11 @@ def _registro_valido(registro) -> bool:
     fases = registro.get('fases', 'ambas')
     return (
         (browser is None or isinstance(browser, str) and browser in NAVEGADORES_VALIDOS)
+        and isinstance(registro.get("nombres_web", {}), dict)
+        and all(isinstance(url, str) and isinstance(nombre, str) and bool(nombre.strip())
+                for url, nombre in registro.get("nombres_web", {}).items())
         and isinstance(paginas, list) and all(isinstance(p, str) for p in paginas)
-        and (tiempo is None or type(tiempo) is int and tiempo > 0)
+        and (tiempo is None or type(tiempo) in (int, float) and tiempo > 0 and math.isfinite(tiempo))
         and isinstance(registro.get("modo", "ambos"), str) and registro.get("modo", "ambos") in MODOS_INTERACCION
         and isinstance(fases, str) and fases in FASES_EDITOR
         and isinstance(registro.get('fuente_descripcion', ''), str)
@@ -245,8 +261,6 @@ def cargar_historial() -> list:
     """Lee las configuraciones de las últimas sesiones; crea el archivo si no existe."""
     try:
         if not RUTA_HISTORIAL.exists():
-            RUTA_HISTORIAL.write_text("[]", encoding="utf-8")
-            logging.info(f"Historial de configuraciones creado en {RUTA_HISTORIAL}")
             return []
         datos = json.loads(RUTA_HISTORIAL.read_text(encoding="utf-8"))
         if not isinstance(datos, list):
@@ -263,12 +277,20 @@ def cargar_historial() -> list:
 
 def guardar_historial(registros: list) -> None:
     """Guarda los registros de configuración en el archivo de historial."""
+    temporal = None
     try:
-        RUTA_HISTORIAL.write_text(
-            json.dumps(registros, ensure_ascii=False, indent=2), encoding="utf-8"
-        )
+        with tempfile.NamedTemporaryFile(mode='w', encoding='utf-8',
+                                         dir=RUTA_HISTORIAL.parent, delete=False) as archivo:
+            temporal = Path(archivo.name)
+            json.dump(registros, archivo, ensure_ascii=False, indent=2)
+            archivo.flush()
+            os.fsync(archivo.fileno())
+        os.replace(temporal, RUTA_HISTORIAL)
     except Exception as e:
         logging.warning(f"No se pudo guardar el historial de configuraciones: {e}")
+    finally:
+        if temporal is not None:
+            temporal.unlink(missing_ok=True)
 
 
 def guardar_configuracion(config: Configuracion) -> None:
@@ -276,7 +298,7 @@ def guardar_configuracion(config: Configuracion) -> None:
     registros = cargar_historial()
     nuevo = _config_a_dict(config)
 
-    clave = {k: nuevo.get(k) for k in ("editor", "browser", "paginas", "fuente_tipo", "directorio", "tiempo", "fases", "modo")}
+    clave = {k: nuevo.get(k) for k in ("editor", "browser", "paginas", "fuente_tipo", "directorio", "tiempo", "fases", "modo", "nombres_web")}
     if registros:
         clave_ultimo = {k: registros[0].get(k) for k in clave}
         if clave_ultimo == clave:
@@ -300,7 +322,7 @@ def _cargar_config_previa(config: Configuracion) -> bool:
         browser = r.get("browser") or "ninguno"
         webs = ", ".join(r.get("paginas") or []) or "ninguna"
         fuente = r.get("fuente_descripcion", "?")
-        tiempo = f"{r.get('tiempo')} min" if r.get("tiempo") else "indefinido"
+        tiempo = formatear_tiempo(r.get("tiempo"))
         fases = FASES_EDITOR.get(r.get("fases"), FASES_EDITOR["ambas"])
         modo = MODOS_INTERACCION[r.get('modo', 'ambos')]
         print(f"    [{i}] {modo} | {editor} | {browser} | {webs} | {fuente} | {fases} | {tiempo} | {r.get('fecha', '')}")
@@ -316,6 +338,7 @@ def _cargar_config_previa(config: Configuracion) -> bool:
 
     config.browser = previa.browser
     config.paginas = previa.paginas
+    config.nombres_web = previa.nombres_web
     config.fuente = previa.fuente
     config.fuente_descripcion = previa.fuente_descripcion
     config.tiempo = previa.tiempo

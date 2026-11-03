@@ -22,6 +22,8 @@ class WebInteractor(BaseAutomation):
         self._turno_restante = None
         self._visita_restante = None
         self._contexto = None
+        self._ventana_web = None
+        self._url_interaccion = None
 
         # Configuración de navegadores y comandos
         self.browser_configs = {
@@ -209,11 +211,14 @@ class WebInteractor(BaseAutomation):
             if not self._queda_tiempo(tiempo_final):
                 return
             config = self.browser_configs[self.browser]
+            self._ventana_web = self.identidad_ventana_activa()
+            self._url_interaccion = self._leer_url_actual()
             center_x, center_y = self._configurar_area_mouse(self.rectangulo_aplicacion(config['mac']))
             self._move_to(center_x, center_y, duration=0.3)
             self._click()
 
             while self._queda_tiempo(tiempo_final):
+                self._confirmar_destino_web()
                 # Clicks aleatorios dentro del radio
                 x_offset = random.randint(-30, 30)
                 y_offset = random.randint(-30, 30)
@@ -237,8 +242,30 @@ class WebInteractor(BaseAutomation):
             raise FailsafeActivo("Failsafe activado durante la interacción web")
         except Exception as e:
             logging.error(f"Error interactuando con página {pagina}: {e}", exc_info=True)
+            raise
         finally:
+            self._ventana_web = None
+            self._url_interaccion = None
             self.registrar_tiempo_interaccion(pagina, tiempo_inicio)
+
+    def _comprobar_area_mouse(self):
+        super()._comprobar_area_mouse()
+        if self._ventana_web is None or self.identidad_ventana_activa() != self._ventana_web:
+            raise RuntimeError('Cambió la ventana del navegador; se cancela la interacción')
+
+    def _click(self):
+        self._confirmar_destino_web()
+        super()._click()
+
+    def _scroll(self, cantidad):
+        self._confirmar_destino_web()
+        super()._scroll(cantidad)
+
+    def _confirmar_destino_web(self):
+        if self.identidad_ventana_activa() != self._ventana_web:
+            raise RuntimeError('Cambió la ventana del navegador; se cancela la interacción')
+        if self._leer_url_actual() != self._url_interaccion:
+            raise RuntimeError('Cambió la dirección del navegador; se cancela la interacción')
 
     def _queda_tiempo(self, tiempo_final) -> bool:
         """Indica si queda tiempo (duración de la página y límite global)"""

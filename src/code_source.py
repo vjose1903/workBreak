@@ -76,20 +76,32 @@ class RealProjectSource:
         if not candidatos:
             candidatos = list(self.archivos)
         random.shuffle(candidatos)
+        if self._ultimo_archivo is not None and self._ultimo_archivo not in candidatos:
+            candidatos.append(self._ultimo_archivo)
         for archivo in candidatos:
+            if self.comprobar_cancelacion:
+                self.comprobar_cancelacion()
             try:
-                contenido = archivo.read_text(encoding="utf-8", errors="replace")
+                with archivo.open(encoding="utf-8", errors="replace") as entrada:
+                    lineas = []
+                    for linea in entrada:
+                        if self.comprobar_cancelacion:
+                            self.comprobar_cancelacion()
+                        lineas.append(linea.rstrip('\r\n'))
+                        if len(lineas) > MAX_LINEAS:
+                            break
             except Exception as e:
                 logging.error(f"Error leyendo {archivo}: {e}")
                 continue
 
-            lineas = contenido.splitlines()
+            if not MIN_LINEAS <= len(lineas) <= MAX_LINEAS:
+                continue
             self._ultimo_archivo = archivo
             logging.info(f"Fuente real: {archivo} ({len(lineas)} líneas)")
             return "\n".join(lineas)
 
         logging.error("No se pudo leer ningún archivo de la fuente real")
-        return "// No se pudo leer el archivo fuente"
+        raise ValueError('No quedan archivos fuente válidos y legibles')
 
     def __str__(self) -> str:
         return f"Directorio real: {self.directorio}"

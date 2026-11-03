@@ -13,6 +13,7 @@ from menu import (Configuracion, configuracion_desde_args, guardar_configuracion
 from web_interactor import WebInteractor
 from statistics_tracker import StatisticsTracker
 from user_activity import MonitorActividad, PausaPorActividad, DetencionSolicitada
+from session_lock import bloquear_sesion, SesionEnCurso
 
 class AutomationBot:
     def __init__(self, solicitar_detencion=None, informar_estado=None):
@@ -64,9 +65,20 @@ class AutomationBot:
         return restante
 
     def gestionar_ejecucion(self, config: Configuracion) -> int:
+        try:
+            with bloquear_sesion():
+                return self._gestionar_ejecucion(config)
+        except SesionEnCurso as error:
+            logging.error(str(error))
+            return 1
+
+    def _gestionar_ejecucion(self, config: Configuracion) -> int:
         """Gestiona la ejecución del bot con resiliencia; devuelve el código de salida"""
         if config.modo == "web" and (not config.browser or not any(p.strip() for p in config.paginas)):
             raise ValueError("Para usar solo navegador selecciona un navegador y al menos una web.")
+        if config.modo != 'editor' and config.paginas and not config.browser:
+            raise ValueError('Selecciona un navegador para utilizar las webs configuradas.')
+        guardar_configuracion(config)
         self._modo = config.modo
         self._turno_actual = "web" if config.modo == "web" else "editor"
         self.editor_interactor.fases = config.fases
@@ -113,6 +125,7 @@ class AutomationBot:
                     if recuperar_portapapeles:
                         self.editor_interactor.conservar_portapapeles_usuario()
                         recuperar_portapapeles = False
+                    self.editor_interactor.guardar_portapapeles_original()
                     if recuperar_editor and self._turno_actual == "editor":
                         if self.editor_interactor.EDITOR_ABIERTO:
                             cmd = self.editor_interactor._comando_abrir_editor(
@@ -246,5 +259,4 @@ class AutomationBot:
             logging.info("Salida por menú; el bot no se ejecutó")
             return 0
 
-        guardar_configuracion(config)
         return self.gestionar_ejecucion(config)

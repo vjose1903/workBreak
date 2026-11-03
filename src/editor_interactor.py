@@ -400,6 +400,12 @@ class EditorInteractor(BaseAutomation):
     def _escribir_siguiente_linea(self, tiempo_final: float) -> None:
         """Escribe la línea en curso; si quedó a medias, continúa desde donde se interrumpió"""
         linea = self.bloque_actual[self.indice_linea]
+        if not linea.strip():
+            # No seleccionar hasta el final en una línea vacía: incluye su salto.
+            self.indice_linea += 1
+            self.desplazamiento = 0
+            self.necesita_reposicionar = True
+            return
 
         if self.necesita_reposicionar:
             self._ir_a_linea(self.inicio_bloque + self.indice_linea + 1)
@@ -407,6 +413,7 @@ class EditorInteractor(BaseAutomation):
 
         if self.desplazamiento == 0:
             self._limpiar_linea_actual()
+            self._verificar_seleccion_linea(linea)
         else:
             self._fin_linea()
             self._esperar(random.uniform(0.05, 0.15))
@@ -425,25 +432,8 @@ class EditorInteractor(BaseAutomation):
             self._lineas_observadas[self.inicio_bloque + self.indice_linea + 1] = linea[:self.desplazamiento]
             self._esperar(random.uniform(0.03, 0.08))
 
-        # El editor puede insertar comillas o paréntesis automáticamente al teclear.
-        if linea:
-            self._asegurar_destino()
-            # El cursor sigue en esta línea: no volver a abrir Ir a línea para restaurarla.
-            if self.is_windows:
-                self._press("home")
-                if linea.strip():
-                    self._press("home")
-            else:
-                self._hotkey("command", "left")
-                if linea.strip():
-                    # VS Code puede detenerse primero en el primer carácter no blanco.
-                    # El segundo salto incluye también la sangría en el reemplazo.
-                    self._hotkey("command", "left")
-            if not self.copiar_al_portapapeles(linea):
-                raise RuntimeError("No se pudo restaurar exactamente la línea reescrita")
-            self._limpiar_linea_actual()
-            self._hotkey(self.cmd_key, "v")
-            self._lineas_observadas[self.inicio_bloque + self.indice_linea + 1] = linea
+        # Cada carácter ya se pega literalmente; un segundo reemplazo puede
+        # seleccionar el salto de línea y unir accidentalmente la línea siguiente.
         self._guardar_linea_actual_mac()
         self.indice_linea += 1
         self.desplazamiento = 0
@@ -495,7 +485,7 @@ class EditorInteractor(BaseAutomation):
 
     def _linea_escribible(self, linea: str) -> bool:
         """Indica si la línea puede reescribirse con pyautogui (solo ASCII imprimible, sin tabulaciones)"""
-        return all(0x20 <= ord(c) <= 0x7E for c in linea)
+        return bool(linea.strip()) and all(0x20 <= ord(c) <= 0x7E for c in linea)
 
     def _limpiar_linea_actual(self) -> None:
         """Selecciona desde la columna 1 confirmada, sin borrar el salto de línea."""
@@ -506,10 +496,19 @@ class EditorInteractor(BaseAutomation):
         self._liberar_modificadores()
 
     def _fin_linea(self) -> None:
-        if self.is_windows:
-            self._press("end")
-        else:
-            self._hotkey("command", "right")
+        numero = self.inicio_bloque + self.indice_linea + 1
+        self._confirmar_linea_mac(numero)
+        # La lectura deja el cursor en columna 1; avanzar exactamente el prefijo
+        # evita confundir el final visual de una línea ajustada con el lógico.
+        for _ in range(self.desplazamiento):
+            self._press('right')
+
+    def _verificar_seleccion_linea(self, esperada):
+        seleccion = self._leer_seleccion_mac()
+        if seleccion != esperada:
+            self._press('left')
+            self.necesita_reposicionar = True
+            raise EditorNoDisponible('La selección no coincide exactamente con la línea; no se reemplazará')
 
     def _inicio_archivo(self) -> None:
         if self.is_windows:
@@ -590,6 +589,10 @@ class EditorInteractor(BaseAutomation):
             raise EditorNoDisponible("No se pudo guardar el estado de la línea reescrita")
         esperada = self.bloque_actual[self.indice_linea][:self.desplazamiento]
         if actual != esperada:
+            logging.error("Contenido de línea inesperado: %s", json.dumps({
+                "linea": numero, "desplazamiento": self.desplazamiento,
+                "longitud_esperada": len(esperada), "longitud_leida": len(actual),
+            }, ensure_ascii=False))
             raise EditorNoDisponible("La línea cambió fuera de la escritura controlada; no se sobrescribirá")
         self._lineas_observadas[numero] = actual
 
@@ -602,8 +605,7 @@ class EditorInteractor(BaseAutomation):
             return False
         return True
 
-    def inyectar_codigo(self) -> None:
-        """Reemplaza el contenido del editor con un bloque grande de código realista"""
+    def guardar_portapapeles_original(self):
         if self._portapapeles_original is None:
             try:
                 self._portapapeles_original = self.leer_portapapeles()
@@ -611,7 +613,13 @@ class EditorInteractor(BaseAutomation):
             except PortapapelesNoDisponible as e:
                 raise EditorNoDisponible("No se pudo guardar el portapapeles original; se cancela la inyección") from e
 
-        codigo = self.fuente_codigo.obtener_codigo()
+    def inyectar_codigo(self) -> None:
+        """Reemplaza el contenido del editor con un bloque grande de código realista"""
+        self.guardar_portapapeles_original()
+        try:
+            codigo = self.fuente_codigo.obtener_codigo()
+        except (OSError, ValueError) as error:
+            raise EditorNoDisponible('No se pudo leer la fuente; se conserva el código actual') from error
 
         if not self.copiar_al_portapapeles(codigo):
             logging.error("No se pudo copiar el código; se omite el pegado")
