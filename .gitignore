@@ -3,3 +3,7 @@
 .env
 .serena/
 config_history.json
+.venv-build/
+.venv-build312/
+build/
+dist/

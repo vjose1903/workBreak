@@ -1,2 +1,3 @@
 -r requirements-base.txt
 pyobjc-framework-Cocoa
+certifi

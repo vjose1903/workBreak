@@ -3,6 +3,9 @@ import sys
 
 def main(argv=None):
     parametros = list(sys.argv[1:] if argv is None else argv)
+    if len(parametros) == 2 and parametros[0] == '--comprobar-paquete':
+        from package_check import comprobar
+        return comprobar(parametros[1])
     terminal = '--terminal' in parametros
     if terminal:
         parametros.remove('--terminal')
@@ -18,4 +21,6 @@ def main(argv=None):
     return AutomationBot().ejecutar(parametros)
 
 if __name__ == "__main__":
+    import multiprocessing
+    multiprocessing.freeze_support()
     sys.exit(main())

@@ -1,0 +1,89 @@
+name: Publicar WorkBreak para macOS
+
+on:
+  push:
+    tags:
+      - 'v*.*.*'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - name: Validar VERSION y tag antes de compilar
+        env:
+          RELEASE_TAG: ${{ github.ref_name }}
+        run: node scripts/release.js --check-tag "$RELEASE_TAG"
+      - name: Probar publicación con repositorios temporales
+        run: node --test tests/release.test.js
+  build:
+    needs: validate
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: macos-15-intel
+            arch: x86_64
+          - runner: macos-15
+            arch: arm64
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: '3.12'
+          cache: pip
+          cache-dependency-path: requirements-build-mac.lock
+      - name: Instalar dependencias de compilación
+        run: python -m pip install -r requirements-build-mac.lock
+      - name: Pruebas sin automatización real
+        run: python -m unittest discover -s tests
+      - name: Crear instaladores
+        run: python scripts/build_macos.py --no-migrate
+      - uses: actions/upload-artifact@v7
+        with:
+          name: macos-${{ matrix.arch }}
+          path: |
+            dist/*.dmg
+            dist/*.pkg
+            dist/*.sha256
+          if-no-files-found: error
+          overwrite: true
+  release:
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+      - uses: actions/download-artifact@v8
+        with:
+          path: artifacts
+          merge-multiple: true
+      - name: Publicar Release del tag
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ github.ref_name }}
+        run: |
+          existing=$(gh release view "$RELEASE_TAG" --json isDraft --jq .isDraft 2>/dev/null || true)
+          if [ "$existing" = "false" ]; then
+            echo "La Release ya está publicada; sus archivos no se reemplazan."
+            exit 0
+          fi
+          notes="$RUNNER_TEMP/workbreak-release-notes.md"
+          git for-each-ref --format='%(contents)' "refs/tags/$RELEASE_TAG" > "$notes"
+          if [ "$existing" = "true" ]; then
+            gh release upload "$RELEASE_TAG" artifacts/* --clobber
+          else
+            gh release create "$RELEASE_TAG" artifacts/* --draft --verify-tag --title "WorkBreak $RELEASE_TAG" --notes-file "$notes"
+          fi
+          gh release edit "$RELEASE_TAG" --title "WorkBreak $RELEASE_TAG" --notes-file "$notes" --draft=false

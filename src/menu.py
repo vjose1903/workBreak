@@ -10,6 +10,7 @@ from typing import Any, List, Optional
 
 from code_generator import CodeGenerator
 from code_source import RealProjectSource
+from app_paths import ruta_historial
 
 NAVEGADORES_VALIDOS = ["chrome", "edge", "opera", "firefox"]
 NAVEGADOR_NINGUNO = {"ninguno", "none", "no", "0", ""}
@@ -21,7 +22,7 @@ FASES_EDITOR = {
     "mouse": "Solo mouse",
 }
 
-RUTA_HISTORIAL = Path(__file__).resolve().parent.parent / "config_history.json"
+RUTA_HISTORIAL = ruta_historial()
 
 
 def formatear_tiempo(minutos):
@@ -279,6 +280,7 @@ def guardar_historial(registros: list) -> None:
     """Guarda los registros de configuración en el archivo de historial."""
     temporal = None
     try:
+        RUTA_HISTORIAL.parent.mkdir(parents=True, exist_ok=True)
         with tempfile.NamedTemporaryFile(mode='w', encoding='utf-8',
                                          dir=RUTA_HISTORIAL.parent, delete=False) as archivo:
             temporal = Path(archivo.name)

@@ -23,6 +23,70 @@ Este bot permite interactuar automáticamente con un editor de código y un nave
 
 ## Instalación
 
+### Aplicación de macOS: instalar y actualizar sin Terminal
+
+Los instaladores versionados se publican en [GitHub Releases](https://github.com/vjose1903/workBreak/releases).
+Descarga el DMG correspondiente a tu Mac: `arm64` para Apple Silicon o `x86_64` para Intel. Esta distribución requiere macOS 15 o posterior.
+
+1. Abre el DMG y ejecuta el archivo `.pkg` que contiene.
+2. El instalador coloca **WorkBreak.app** en **Aplicaciones**. Ábrelo desde allí: aparecerá su W en la barra superior, sin ventana de Terminal ni una instalación adicional de Python.
+3. Al iniciar el bot por primera vez, concede a WorkBreak los permisos de **Accesibilidad**, **Monitorización de entrada** y **Automatización** que macOS solicite para el editor y el navegador. Los permisos de Terminal no sustituyen los de esta aplicación.
+
+Para actualizar, utiliza **Buscar actualizaciones…** en el menú de WorkBreak. La aplicación consulta la última Release estable de este repositorio y ofrece descargar el DMG compatible. Cierra WorkBreak y ejecuta el nuevo `.pkg`: actualizará la aplicación existente, sin borrarla manualmente. El instalador rechaza la instalación mientras la aplicación empaquetada está abierta y comprueba las versiones para evitar sobrescribir una más reciente con otra antigua.
+
+La configuración instalada se conserva en `~/Library/Application Support/WorkBreak/config_history.json`; los registros están en `~/Library/Logs/WorkBreak/`. Ambos quedan fuera de la aplicación y sobreviven a su sustitución. El build local migra una vez el historial del checkout a Application Support si allí todavía no existe uno. Nunca incluye configuraciones personales en el DMG ni reemplaza las ya instaladas.
+
+La distribución actual utiliza firma local ad hoc, **sin Developer ID ni notarización de Apple**. macOS puede bloquear la primera apertura de un archivo descargado; la autorización se gestiona en **Ajustes del Sistema → Privacidad y seguridad**. Tras actualizar puede ser necesario renovar los permisos de automatización. No se desactiva Gatekeeper. La descarga es explícita y la instalación la realiza el instalador nativo; no hay reemplazos silenciosos ni un actualizador con privilegios propios.
+
+### Compilar una distribución
+
+Requiere macOS 15+, Python 3.12 y las herramientas de línea de comandos de Apple. Las dependencias del build están fijadas en `requirements-build-mac.lock`; se instalan en un entorno independiente del Python habitual:
+
+```bash
+python3.12 -m venv .venv-build
+.venv-build/bin/python -m pip install -r requirements-build-mac.lock
+.venv-build/bin/python scripts/build_macos.py
+```
+
+Se generan `dist/WorkBreak-X.Y.Z-macos-ARQUITECTURA.dmg`, `.pkg` y `.sha256`. Cada build verifica la firma estructural y ejecuta una comprobación del binario: interfaz nativa, recursos, certificados HTTPS e importación de la automatización en un proceso separado, sin enviar entradas ni conectar con la red. `--no-migrate` omite la migración del historial local. Los artefactos se construyen para la arquitectura del Python usado, no son universales.
+
+`VERSION` es la única fuente de versión de la aplicación, el paquete y las descargas. Para incrementarla:
+
+```bash
+python scripts/version.py patch
+```
+
+Usa `patch` para correcciones, `minor` para funcionalidades y `major` para cambios incompatibles. El comando modifica `VERSION` y muestra el tag correspondiente; no confirma cambios ni publica nada.
+
+### Publicar actualizaciones mediante tags de GitHub
+
+El comando de publicación es similar al `release.js` de Novac y solo necesita Node.js 18 o posterior y Git:
+
+```bash
+node scripts/release.js
+```
+
+Elige **mayor**, **versión** o **parche** y describe los cambios. Para publicar la primera `1.0.0`, o si ya incrementaste `VERSION` por separado, elige **Actual**. El script muestra la rama, la versión, el tag y los archivos pendientes antes de pedir la confirmación final. Incluye todos los cambios del proyecto que no estén ignorados por Git, crea el commit y un tag anotado con la descripción, y envía rama y tag juntos mediante un push atómico. No es necesario ejecutar los comandos Git manualmente ni compilar el DMG en tu Mac.
+
+Para revisar el flujo sin modificar archivos, staging, commits ni tags:
+
+```bash
+node scripts/release.js --dry-run --kind parche --description "Corrección de escritura"
+```
+
+El script comprueba tags locales y remotos, límites de versión de macOS, conflictos, rama separada y sincronización con origin. No reemplaza tags existentes ni hace push forzado. Si el envío falla, conserva los cambios y muestra cómo reintentar el push sin crear otra versión.
+
+Al llegar un tag `vX.Y.Z`, el workflow `.github/workflows/release-macos.yml`:
+
+1. Comprueba que el tag coincida exactamente con `VERSION` y prueba el publicador con repositorios temporales.
+2. Ejecuta las pruebas de Python y compila instaladores separados para Intel y Apple Silicon.
+3. Verifica los ejecutables y genera DMG, PKG y sumas SHA-256.
+4. Prepara una Release en borrador con la descripción del tag y solo la publica cuando ambos instaladores están disponibles. Las reejecuciones pueden completar un borrador, pero no sustituyen archivos de una Release ya publicada.
+
+La implementación y el workflow deben formar parte del commit publicado; el script los incluirá si están pendientes. No se deben mover tags publicados: cualquier corrección lleva un nuevo número y un nuevo tag. **Buscar actualizaciones…** compara versiones numéricamente y consulta únicamente Releases estables con instalador para la arquitectura actual. Los tags sin Release o sin instaladores no se ofrecen como actualizaciones instalables.
+
+Si en el futuro dispones de certificados de distribución, el build admite `WORKBREAK_CODESIGN_IDENTITY`, `WORKBREAK_INSTALLER_IDENTITY` y `WORKBREAK_NOTARY_PROFILE` (perfil guardado en Keychain para `notarytool`). No se incluyen certificados ni contraseñas en el repositorio. La firma y notarización con Developer ID requieren configurar esas credenciales en el entorno de compilación; el workflow actual usa firma local.
+
 ### 1. Clonar el repositorio
 
 ```bash
@@ -65,7 +129,7 @@ Para utilizar el menú anterior en Terminal:
 python src/main.py --terminal
 ```
 
-En Windows el menú de terminal continúa siendo el predeterminado. Los parámetros CLI conservan su funcionamiento en ambos sistemas. Esta primera interfaz se ejecuta desde Python; todavía no es una aplicación `.app` independiente de Terminal. macOS requiere `pyobjc-framework-Cocoa`, declarado en `requirements-mac.txt`.
+En Windows el menú de terminal continúa siendo el predeterminado. Los parámetros CLI conservan su funcionamiento en ambos sistemas. Al ejecutar desde el checkout se utiliza Python; la distribución DMG incluye su propia aplicación y runtime. Las dependencias de macOS están declaradas en `requirements-mac.txt`.
 
 El editor es siempre **Visual Studio Code**, sin selección adicional.
 

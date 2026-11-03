@@ -6,6 +6,7 @@ from pathlib import Path
 import signal
 import tempfile
 import time
+import sys
 from urllib.parse import urlsplit
 
 import objc
@@ -15,8 +16,11 @@ from AppKit import (
     NSTextField, NSTextView, NSVariableStatusItemLength, NSWorkspace,
     NSButton, NSColor, NSStepper, NSSwitch, NSTableColumn, NSTableView, NSView,
 )
-from Foundation import NSObject, NSRunLoop, NSRunLoopCommonModes, NSTimer
+from Foundation import NSObject, NSRunLoop, NSRunLoopCommonModes, NSTimer, NSURL
 
+from app_paths import recurso
+from app_version import VERSION
+from app_updates import Actualizador
 from app_controller import ControladorBot
 from menu import Configuracion, FASES_EDITOR, MODOS_INTERACCION, NAVEGADORES_VALIDOS, formatear_tiempo, _config_a_dict, cargar_historial
 
@@ -47,7 +51,7 @@ class DialogoTiempo(NSObject):
         self.alerta = NSAlert.alloc().init()
         self.alerta.setMessageText_('Tiempo de ejecución')
         self.alerta.setInformativeText_('Define una duración o activa el tiempo indefinido.')
-        icono = NSImage.alloc().initWithContentsOfFile_(str(Path(__file__).resolve().parent.parent / 'assets' / 'icon.svg'))
+        icono = NSImage.alloc().initWithContentsOfFile_(str(recurso('assets/icon.svg')))
         if icono is not None:
             self.alerta.setIcon_(icono)
         guardar = self.alerta.addButtonWithTitle_('Guardar')
@@ -160,7 +164,7 @@ class DialogoWebs(NSObject):
         self.nombres = {url: (nombres or {}).get(url) or urlsplit(url).hostname or url for url in paginas}
         self.alerta = NSAlert.alloc().init()
         self.alerta.setMessageText_('Webs del bot')
-        icono = NSImage.alloc().initWithContentsOfFile_(str(Path(__file__).resolve().parent.parent / 'assets' / 'icon.svg'))
+        icono = NSImage.alloc().initWithContentsOfFile_(str(recurso('assets/icon.svg')))
         if icono is not None:
             self.alerta.setIcon_(icono)
         self.alerta.setInformativeText_('Identifica cada web con un nombre y agrega su dirección.')
@@ -317,8 +321,13 @@ class MenuWorkBreak(NSObject):
         if self is None:
             return None
         self.controlador = ControladorBot()
+        self.actualizador = Actualizador()
         self.config = _config_a_dict(Configuracion())
         self.historial = []
+        if getattr(sys, 'frozen', False):
+            historial = cargar_historial()
+            if historial:
+                self.config.update(copy.deepcopy(historial[0]))
         self.saliendo = False
         self._estaba_activo = False
         self.timer = None
@@ -356,7 +365,7 @@ class MenuWorkBreak(NSObject):
                 NSApplication.sharedApplication().setApplicationIconImage_(imagen)
         self.item_barra = NSStatusBar.systemStatusBar().statusItemWithLength_(NSVariableStatusItemLength)
         boton = self.item_barra.button()
-        ruta_icono = Path(__file__).resolve().parent.parent / 'assets' / 'icon.svg'
+        ruta_icono = recurso('assets/icon.svg')
         icono = NSImage.alloc().initWithContentsOfFile_(str(ruta_icono))
         if icono is not None and icono.size().height > 0:
             tamano = icono.size()
@@ -461,6 +470,7 @@ class MenuWorkBreak(NSObject):
         menu.addItem_(NSMenuItem.separatorItem())
         self.item(menu, 'Estado y estadísticas…', 'estadisticas')
         self.item(menu, 'Ver registro…', 'registro')
+        self.actualizar_item = self.item(menu, 'Buscar actualizaciones…', 'actualizaciones')
         self.salir_item = self.item(menu, 'Salir de WorkBreak', 'salir')
         self.item_barra.setMenu_(menu)
         self.actualizar(None)
@@ -484,7 +494,7 @@ class MenuWorkBreak(NSObject):
             'finalizado': 'Sesión finalizada', 'error': 'Error en la sesión',
         }
         titulo = titulos.get(estado, estado)
-        self.estado_item.setTitle_('WorkBreak — ' + titulo)
+        self.estado_item.setTitle_(f'WorkBreak {VERSION} — ' + titulo)
         self.item_barra.button().setToolTip_('WorkBreak — ' + titulo)
         detalle = MODOS_INTERACCION[self.config.get('modo', 'ambos')]
         if self.config.get('modo') != 'web':
@@ -506,8 +516,14 @@ class MenuWorkBreak(NSObject):
             item.setEnabled_(not activo and not self.saliendo)
         for item in self.config_web_items:
             item.setEnabled_(not activo and not self.saliendo and self.config.get('modo') != 'editor')
+        self.actualizar_item.setEnabled_(not activo and not self.saliendo and not self.actualizador.consultando)
+        self.actualizar_item.setTitle_('Buscando actualizaciones…' if self.actualizador.consultando else 'Buscar actualizaciones…')
         self.salir_item.setTitle_('Deteniendo antes de salir…' if self.saliendo else 'Salir de WorkBreak')
         self.salir_item.setEnabled_(not self.saliendo)
+        if not activo and not self.saliendo:
+            resultado = self.actualizador.obtener_resultado()
+            if resultado is not None:
+                self.mostrar_actualizacion(resultado)
         if self.saliendo and not activo:
             self.controlador.cerrar()
             if self.timer:
@@ -523,6 +539,25 @@ class MenuWorkBreak(NSObject):
         alerta.setInformativeText_(mensaje)
         alerta.addButtonWithTitle_('Aceptar')
         alerta.runModal()
+
+    @objc.python_method
+    def mostrar_actualizacion(self, resultado):
+        if resultado.get('error'):
+            self.aviso('Actualizaciones de WorkBreak', resultado['error'])
+            return
+        nueva = resultado.get('actualizacion')
+        if nueva is None:
+            self.aviso('WorkBreak está actualizado', f'Versión instalada: {VERSION}.')
+            return
+        NSApplication.sharedApplication().activateIgnoringOtherApps_(True)
+        alerta = NSAlert.alloc().init()
+        alerta.setMessageText_(f"WorkBreak {nueva['version']} disponible")
+        alerta.setInformativeText_(f'Versión instalada: {VERSION}. Descarga el DMG y ejecuta el instalador para actualizar sin borrar tu configuración. Cierra WorkBreak antes de instalar.')
+        alerta.addButtonWithTitle_('Descargar actualización')
+        alerta.addButtonWithTitle_('Ahora no')
+        if alerta.runModal() == 1000:
+            if not NSWorkspace.sharedWorkspace().openURL_(NSURL.URLWithString_(nueva['url'])):
+                self.aviso('WorkBreak', 'No se pudo abrir la descarga en el navegador.')
 
     @objc.python_method
     def preguntar(self, titulo, mensaje, valor):
@@ -555,6 +590,8 @@ class MenuWorkBreak(NSObject):
                     self.aviso('Registro de WorkBreak', 'Todavía no se ha iniciado ninguna sesión.')
             elif self.controlador.activo or self.saliendo:
                 return
+            elif comando == 'actualizaciones':
+                self.actualizador.buscar()
             elif comando == 'iniciar':
                 self.controlador.iniciar(self.config)
             else:
