@@ -19,6 +19,7 @@ class AutomationBot:
         self.stats_tracker = StatisticsTracker()
         self.editor_interactor = EditorInteractor(self.stats_tracker)
         self.web_interactor = WebInteractor(self.stats_tracker)
+        self._turno_actual = "editor"
 
     def validar_tiempo(self, value: str) -> Optional[int]:
         """Valida el tiempo proporcionado por el usuario (minutos positivos o 'indefinido')"""
@@ -75,7 +76,9 @@ class AutomationBot:
         monitor = MonitorActividad()
         self.editor_interactor.monitor_actividad = monitor
         self.web_interactor.monitor_actividad = monitor
+        self.web_interactor.portapapeles_bot = self.editor_interactor.portapapeles_bot
         recuperar_editor = False
+        recuperar_portapapeles = False
 
         try:
             monitor.iniciar()
@@ -83,18 +86,23 @@ class AutomationBot:
             while self._tiempo_restante() > 0:
                 try:
                     monitor.comprobar()
-                    if recuperar_editor and self.editor_interactor.EDITOR_ABIERTO:
-                        cmd = self.editor_interactor._comando_abrir_editor(
-                            config.editor, self.editor_interactor.ruta_archivo)
-                        if not self.editor_interactor.ejecutar_comando(cmd):
-                            raise EditorNoDisponible("No se pudo recuperar el archivo del bot tras la pausa")
-                        self.editor_interactor._esperar(0.3)
-                    recuperar_editor = False
+                    if recuperar_portapapeles:
+                        self.editor_interactor.conservar_portapapeles_usuario()
+                        recuperar_portapapeles = False
+                    if recuperar_editor and self._turno_actual == "editor":
+                        if self.editor_interactor.EDITOR_ABIERTO:
+                            cmd = self.editor_interactor._comando_abrir_editor(
+                                config.editor, self.editor_interactor.ruta_archivo)
+                            if not self.editor_interactor.ejecutar_comando(cmd):
+                                raise EditorNoDisponible("No se pudo recuperar el archivo del bot tras la pausa")
+                            self.editor_interactor._esperar(0.3)
+                        recuperar_editor = False
                     self.ejecutar_tareas(config.editor, paginas)
                     fallos_consecutivos = 0
                 except PausaPorActividad:
                     self.editor_interactor.necesita_reposicionar = True
                     recuperar_editor = True
+                    recuperar_portapapeles = True
                     logging.info("Actividad del usuario: bot pausado hasta completar 10 segundos de inactividad")
                     limite = self.editor_interactor._tiempo_limite_absoluto
                     if not monitor.esperar_inactividad(limite=limite):
@@ -168,13 +176,16 @@ class AutomationBot:
         turnos acotados para que ambas arranquen apenas su aplicación está abierta,
         en lugar de esperar a que termine toda la fase del editor.
         """
-        self.editor_interactor.asegurar_editor_abierto(editor)
-
-        if paginas:
-            self.editor_interactor.interactuar_editor(duracion_maxima=random.uniform(30, 90))
+        if self._turno_actual == "editor":
+            self.editor_interactor.asegurar_editor_abierto(editor)
+            if paginas:
+                self.editor_interactor.interactuar_editor(duracion_maxima=random.uniform(30, 90))
+                self._turno_actual = "web"
+            else:
+                self.editor_interactor.interactuar_editor()
+        if paginas and self._turno_actual == "web":
             self.web_interactor.interactuar_web(duracion_maxima=random.uniform(30, 60))
-        else:
-            self.editor_interactor.interactuar_editor()
+            self._turno_actual = "editor"
 
     def ejecutar(self) -> int:
         """Usa los argumentos proporcionados o muestra el menú interactivo."""

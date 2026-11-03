@@ -102,11 +102,19 @@ python src/main.py -browser chrome -web "https://google.com,https://chat.openai.
 
 ## Detener el bot
 
-El bot se pausa automáticamente cuando detecta actividad del usuario en el teclado o el mouse, en cualquier aplicación y en cualquier fase. Cada tecla, movimiento, clic o scroll reinicia una espera de **10 segundos desde la última actividad**. Tras ese intervalo sin intervención, recupera su archivo y continúa; sus propios eventos no reinician la espera. Los movimientos animados se comprueban en pasos de unos 10 ms y cada carácter se comprueba antes de enviarlo.
+Durante los primeros **5 segundos del inicio**, el bot ignora la actividad del usuario para que el Enter utilizado para arrancarlo no provoque una pausa. El bot comienza a trabajar durante ese margen, sin esperar a que termine. Los eventos ignorados no se acumulan ni disparan una pausa posterior.
+
+Después de ese margen, el bot se pausa automáticamente cuando detecta actividad del usuario en el teclado o el mouse, en cualquier aplicación y en cualquier fase. Cada tecla, movimiento, clic o scroll reinicia una espera de **10 segundos desde la última actividad**. Tras ese intervalo sin intervención, recupera su archivo y continúa; sus propios eventos no reinician la espera. Los movimientos animados se comprueban en pasos de unos 10 ms y cada carácter se comprueba antes de enviarlo.
 
 La terminal informa el inicio de la pausa, los reinicios del debounce, los segundos restantes y la reanudación. La cuenta se actualiza por segundo y los eventos continuos se agrupan para no saturar la consola. Si mantienes una tecla o un botón pulsado, indica que la cuenta comenzará cuando lo sueltes.
 
-El límite total de ejecución continúa contando durante la pausa. Si intervienes durante una visita web, el bot no cierra esa pestaña durante la intervención. Si modificas el contenido de su archivo temporal, las comprobaciones de línea pueden detener la ejecución para no sobrescribir tus cambios.
+El límite total de ejecución continúa contando durante la pausa. Las estadísticas conservan el tiempo trabajado antes de cada interrupción y excluyen la espera de reanudación. El bot conserva el contenido nuevo que copies durante una pausa para restaurarlo al finalizar, y no reemplaza un portapapeles que haya cambiado externamente.
+
+Si intervienes durante una visita web, el bot conserva la página, el índice del recorrido y el tiempo restante del turno; al reanudar no vuelve primero al editor ni abre otra pestaña. Comprueba la dirección antes de continuar. La pestaña intervenida se mantiene y se reutiliza, en lugar de cerrarla automáticamente. Si su dirección cambió, detiene el turno con un mensaje para que actives la pestaña correspondiente. Si modificas el contenido del archivo temporal del editor, las comprobaciones de línea pueden detener la ejecución para no sobrescribir tus cambios.
+
+Si una pausa interrumpe una navegación antes de confirmar su URL resultante, el bot conserva esa pestaña y continúa en una nueva. Así evita confundir una redirección con un cambio de pestaña del usuario. Pueden quedar pestañas adicionales abiertas si se repite esa interrupción.
+
+En macOS las aperturas se solicitan en segundo plano y los procesos auxiliares de activación y consulta del editor se cancelan al detectar actividad. Una acción que el sistema operativo ya haya ejecutado no puede deshacerse con la pausa. Si el monitor pierde una liberación de tecla o botón, consulta el estado físico para evitar una pausa permanente.
 
 En macOS la detección global requiere permiso de **Monitorización de entrada** y **Accesibilidad** para la aplicación desde la que ejecutas Python (por ejemplo, Terminal). Si no puede iniciar el monitor, el bot termina con un mensaje en lugar de ejecutarse sin esta protección. Windows utiliza los hooks nativos de teclado y mouse. No se requieren dependencias nuevas.
 
@@ -115,6 +123,8 @@ Para finalizar el script, presiona `CTRL + C` en la terminal.
 También puedes activar la parada de emergencia de PyAutoGUI llevando el mouse a una esquina de la pantalla principal. Al detectarla, el bot no envía teclas para cerrar pestañas; puede quedar abierta la pestaña de esa interacción.
 
 ## Notas
+
+* Al cambiar de fase en macOS, el bot conserva el contenido real de la línea que acaba de escribir, aunque haya quedado incompleta. Cada nueva escritura invalida la captura anterior; si una pausa impide renovarla, comprueba el prefijo escrito antes de continuar. Al regresar selecciona la línea lógica completa, incluso cuando ocupa varias filas visuales. Si la comprobación falla, registra el número de línea, las longitudes y si existía captura previa, sin imprimir el código fuente.
 
 * En Windows, puede ser necesario ejecutar la terminal como administrador para que `pyautogui` funcione correctamente.
 * En macOS, puede requerir permisos adicionales de accesibilidad en `Preferencias del Sistema > Seguridad y privacidad > Accesibilidad`.

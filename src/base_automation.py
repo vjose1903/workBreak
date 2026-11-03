@@ -41,6 +41,7 @@ class BaseAutomation:
         self._proceso_caffeinate = None
         self._mac_keyboard = None
         self.monitor_actividad = None
+        self.portapapeles_bot = {"ultimo": None}
 
     def _antes_accion(self):
         if self.monitor_actividad is not None:
@@ -51,6 +52,42 @@ class BaseAutomation:
             time.sleep(segundos)
         else:
             self.monitor_actividad.esperar_intervalo(segundos)
+
+    def _ejecutar_proceso(self, cmd, timeout=10, **opciones):
+        """Cancela únicamente el proceso auxiliar del bot si interviene el usuario."""
+        if self.monitor_actividad is None:
+            return subprocess.run(cmd, timeout=timeout, **opciones)
+        self._antes_accion()
+        check = opciones.pop('check', False)
+        if opciones.pop('capture_output', False):
+            opciones['stdout'] = subprocess.PIPE
+            opciones['stderr'] = subprocess.PIPE
+        proceso = subprocess.Popen(cmd, **opciones)
+        fin = time.monotonic() + timeout
+        try:
+            while True:
+                self._antes_accion()
+                restante = fin - time.monotonic()
+                if restante <= 0:
+                    raise subprocess.TimeoutExpired(cmd, timeout)
+                try:
+                    stdout, stderr = proceso.communicate(timeout=min(0.02, restante))
+                    break
+                except subprocess.TimeoutExpired:
+                    continue
+            self._antes_accion()
+        except BaseException:
+            if proceso.poll() is None:
+                proceso.terminate()
+                try:
+                    proceso.communicate(timeout=0.2)
+                except subprocess.TimeoutExpired:
+                    proceso.kill()
+                    proceso.communicate()
+            raise
+        if check and proceso.returncode:
+            raise subprocess.CalledProcessError(proceso.returncode, cmd, stdout, stderr)
+        return subprocess.CompletedProcess(cmd, proceso.returncode, stdout, stderr)
 
     def _teclado_mac(self):
         if self._mac_keyboard is None:
@@ -162,7 +199,7 @@ class BaseAutomation:
     def _activar_aplicacion_mac(self, nombre_mac: str) -> bool:
         """Activa la app en macOS vía System Events, con fallback a 'activate'"""
         try:
-            subprocess.run(
+            self._ejecutar_proceso(
                 ['osascript', '-e',
                  f'set appBundleId to id of application "{nombre_mac}"\n'
                  'tell application "System Events"\n'
@@ -176,7 +213,7 @@ class BaseAutomation:
         except subprocess.CalledProcessError:
             self._antes_accion()
             try:
-                subprocess.run(
+                self._ejecutar_proceso(
                     ['osascript', '-e', f'tell application "{nombre_mac}" to activate'],
                     check=True,
                     capture_output=True
@@ -231,10 +268,14 @@ class BaseAutomation:
         try:
             import pyperclip
             pyperclip.copy(texto)
+            self.portapapeles_bot["ultimo"] = texto
             return True
         except Exception as e:
             logging.warning(f"pyperclip no disponible ({e}); usando fallback del sistema")
-            return self._copiar_portapapeles_fallback(texto)
+            exito = self._copiar_portapapeles_fallback(texto)
+            if exito:
+                self.portapapeles_bot["ultimo"] = texto
+            return exito
 
     def _copiar_portapapeles_fallback(self, texto: str) -> bool:
         """Copia al portapapeles usando utilidades nativas (pbcopy/clip)"""

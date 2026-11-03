@@ -12,8 +12,10 @@ class PausaPorActividad(BaseException):
 
 
 class MonitorActividad:
-    def __init__(self, debounce=10.0):
+    def __init__(self, debounce=10.0, margen_inicial=5.0):
         self.debounce = debounce
+        self.margen_inicial = margen_inicial
+        self._detectar_desde = None
         self._condicion = threading.Condition()
         self._ultima = None
         self._version = 0
@@ -25,15 +27,34 @@ class MonitorActividad:
         self._runloop = None
         self._thread_id = None
         self._pulsadas = set()
+        self._esta_pulsada = None
+
+    def reconciliar_pulsadas(self):
+        """Descarta liberaciones perdidas consultando el estado físico actual."""
+        with self._condicion:
+            pendientes = set(self._pulsadas)
+            version = self._version
+        if self._esta_pulsada is None or not pendientes:
+            return
+        soltadas = {tecla for tecla in pendientes if not self._esta_pulsada(tecla)}
+        with self._condicion:
+            if soltadas and version == self._version:
+                self._pulsadas.difference_update(soltadas)
+                self._ultima = time.monotonic()
+                self._version += 1
+                self._condicion.notify_all()
 
     def registrar(self, identificador=None, pulsada=None):
         with self._condicion:
+            ahora = time.monotonic()
+            if self._detectar_desde is not None and ahora < self._detectar_desde:
+                return
             if identificador is not None:
                 if pulsada:
                     self._pulsadas.add(identificador)
                 else:
                     self._pulsadas.discard(identificador)
-            self._ultima = time.monotonic()
+            self._ultima = ahora
             self._version += 1
             self._condicion.notify_all()
 
@@ -60,6 +81,7 @@ class MonitorActividad:
         ultimo_log = float('-inf')
         contador_informado = None
         while True:
+            self.reconciliar_pulsadas()
             mensaje = None
             with self._condicion:
                 if self._error is not None:
@@ -100,6 +122,8 @@ class MonitorActividad:
                     self._condicion.wait(espera)
 
     def iniciar(self):
+        # Ignorar también el Enter y los eventos recibidos al preparar el monitor nativo.
+        self._detectar_desde = float('inf')
         self._hilo = threading.Thread(target=self._escuchar, daemon=True, name="actividad-usuario")
         self._hilo.start()
         if not self._listo.wait(5):
@@ -107,6 +131,9 @@ class MonitorActividad:
             raise RuntimeError("No se pudo iniciar el monitor de teclado y mouse")
         if self._error is not None:
             raise RuntimeError(f"No se pudo iniciar el monitor de actividad: {self._error}")
+        with self._condicion:
+            self._detectar_desde = time.monotonic() + self.margen_inicial
+        logging.info("Inicio del bot: las pausas por actividad se activarán en %g segundos", self.margen_inicial)
 
     def _escuchar(self):
         try:
@@ -124,6 +151,16 @@ class MonitorActividad:
 
     def _escuchar_mac(self):
         import Quartz as q
+
+        def esta_pulsada(identificador):
+            tipo, codigo = identificador
+            if tipo == 'tecla':
+                return q.CGEventSourceKeyState(q.kCGEventSourceStateHIDSystemState, codigo)
+            if tipo == 'mouse':
+                return q.CGEventSourceButtonState(q.kCGEventSourceStateHIDSystemState, codigo)
+            return bool(q.CGEventSourceFlagsState(q.kCGEventSourceStateHIDSystemState) & codigo)
+
+        self._esta_pulsada = esta_pulsada
 
         tipos = (q.kCGEventKeyDown, q.kCGEventKeyUp, q.kCGEventFlagsChanged,
                  q.kCGEventMouseMoved, q.kCGEventLeftMouseDown, q.kCGEventLeftMouseUp,
@@ -188,6 +225,11 @@ class MonitorActividad:
 
         usuario = c.WinDLL('user32', use_last_error=True)
         kernel = c.WinDLL('kernel32', use_last_error=True)
+        usuario.GetAsyncKeyState.argtypes = [c.c_int]
+        usuario.GetAsyncKeyState.restype = c.c_short
+        botones_fisicos = {0: 1, 1: 2, 2: 4, 3: 5, 4: 6}
+        self._esta_pulsada = lambda tecla: bool(usuario.GetAsyncKeyState(
+            botones_fisicos[tecla[1]] if tecla[0] == 'mouse' else tecla[1]) & 0x8000)
         callback_type = c.WINFUNCTYPE(c.c_ssize_t, c.c_int, w.WPARAM, w.LPARAM)
 
         class Teclado(c.Structure):

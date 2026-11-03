@@ -12,6 +12,27 @@ class MonitorActividadTest(unittest.TestCase):
     def test_sin_actividad_no_hay_pausa(self):
         MonitorActividad().comprobar()
 
+    def test_inicio_ignora_enter_y_activa_pausas_despues_de_cinco_segundos(self):
+        monitor = MonitorActividad()
+        reloj = [100.0]
+        with patch('user_activity.time.monotonic', side_effect=lambda: reloj[0]), \
+                patch('user_activity.threading.Thread') as hilo, \
+                patch.object(monitor._listo, 'wait', return_value=True):
+            hilo.return_value.start.side_effect = lambda: monitor.registrar(('tecla', 36), True)
+            monitor.iniciar()
+            monitor.registrar(('tecla', 36), False)
+            reloj[0] = 104.999
+            monitor.registrar(('mouse', 0), True)
+            monitor.comprobar()
+            self.assertFalse(monitor._pulsadas)
+            self.assertIsNone(monitor._ultima)
+            reloj[0] = 105
+            monitor.registrar()
+            with self.assertRaises(PausaPorActividad):
+                monitor.comprobar()
+        self.assertEqual(monitor.debounce, 10)
+        self.assertEqual(monitor._ultima, 105)
+
     def test_cada_evento_reinicia_los_diez_segundos(self):
         monitor = MonitorActividad()
         reloj = [0.0]
@@ -45,6 +66,34 @@ class MonitorActividadTest(unittest.TestCase):
         with patch.object(monitor._condicion, 'wait', side_effect=lambda _: monitor.registrar()):
             with self.assertRaises(PausaPorActividad):
                 monitor.esperar_intervalo(10)
+
+    def test_liberacion_perdida_se_reconcilia_con_el_estado_fisico(self):
+        monitor = MonitorActividad()
+        monitor._esta_pulsada = lambda _: False
+        reloj = [0.0]
+
+        def esperar(segundos):
+            reloj[0] += segundos
+
+        with patch('user_activity.time.monotonic', side_effect=lambda: reloj[0]), \
+                patch.object(monitor._condicion, 'wait', side_effect=esperar):
+            monitor.registrar(('tecla', 1), True)
+            reloj[0] = 2
+            self.assertTrue(monitor.esperar_inactividad())
+        self.assertFalse(monitor._pulsadas)
+        self.assertEqual(reloj[0], 12)
+
+    def test_sondeo_no_descarta_una_pulsacion_nueva(self):
+        monitor = MonitorActividad()
+        monitor.registrar(('tecla', 1), True)
+
+        def estado(_):
+            monitor.registrar(('tecla', 1), True)
+            return False
+
+        monitor._esta_pulsada = estado
+        monitor.reconciliar_pulsadas()
+        self.assertIn(('tecla', 1), monitor._pulsadas)
 
     def test_no_reanuda_mientras_se_mantiene_una_tecla_pulsada(self):
         monitor = MonitorActividad()
