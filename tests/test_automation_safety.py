@@ -343,7 +343,9 @@ class AutomationSafetyTest(unittest.TestCase):
         minimo = self.web._distancia_minima_click()
         for _ in range(50):
             destino = self.web._destino_lejano(500, 400)
-            self.assertGreaterEqual(((destino[0] - 500) ** 2 + (destino[1] - 400) ** 2) ** .5, minimo)
+            distancia = ((destino[0] - 500) ** 2 + (destino[1] - 400) ** 2) ** .5
+            self.assertGreaterEqual(distancia, minimo)
+            self.assertLessEqual(distancia, 2 * minimo + 1)
         teclado.position.return_value = (520, 410)
         self.assertFalse(self.web._lejos_del_ultimo_click())
         teclado.position.return_value = (900, 100)

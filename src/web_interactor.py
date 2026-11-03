@@ -326,7 +326,7 @@ class WebInteractor(BaseAutomation):
         if self._area_mouse is None:
             return 0
         izquierda, arriba, derecha, abajo = self._area_mouse
-        return max(150, 0.35 * min(derecha - izquierda, abajo - arriba))
+        return max(80, 0.15 * min(derecha - izquierda, abajo - arriba))
 
     def _lejos_del_ultimo_click(self):
         if self._ultimo_click is None:
@@ -335,15 +335,18 @@ class WebInteractor(BaseAutomation):
         return math.dist((x, y), self._ultimo_click) >= self._distancia_minima_click()
 
     def _destino_lejano(self, center_x, center_y):
-        """Punto aleatorio del área segura alejado del último click."""
+        """Punto del área segura a una distancia moderada del último click (entre 1 y 2 veces la mínima)."""
         if self._area_mouse is None:
             return center_x + random.randint(-30, 30), center_y + random.randint(-30, 30)
         izquierda, arriba, derecha, abajo = self._area_mouse
         minimo = self._distancia_minima_click()
+        origen = self._ultimo_click or self._posicion_mouse()
         mejor, mejor_distancia = None, -1
         for _ in range(20):
-            punto = (random.randint(izquierda, derecha), random.randint(arriba, abajo))
-            distancia = math.dist(punto, self._ultimo_click) if self._ultimo_click else float('inf')
+            angulo, radio = random.uniform(0, 2 * math.pi), random.uniform(minimo, 2 * minimo)
+            punto = (round(min(max(origen[0] + radio * math.cos(angulo), izquierda), derecha)),
+                     round(min(max(origen[1] + radio * math.sin(angulo), arriba), abajo)))
+            distancia = math.dist(punto, origen)
             if distancia >= minimo:
                 return punto
             if distancia > mejor_distancia:
