@@ -9,7 +9,7 @@
 </p>
 
 <p align="center">
-  <img src="https://img.shields.io/badge/versi%C3%B3n_del_c%C3%B3digo-1.0.0-536DFE" alt="Versión del código: 1.0.0" />
+  <img src="https://img.shields.io/badge/versi%C3%B3n_del_c%C3%B3digo-1.0.1-536DFE" alt="Versión del código: 1.0.1" />
   <img src="https://img.shields.io/badge/macOS-15%2B-black?logo=apple" alt="macOS 15 o posterior" />
   <img src="https://img.shields.io/badge/arquitecturas-Intel_%7C_Apple_Silicon-00A6CB" alt="Intel y Apple Silicon" />
   <a href="https://github.com/vjose1903/workBreak/actions/workflows/release-macos.yml"><img src="https://github.com/vjose1903/workBreak/actions/workflows/release-macos.yml/badge.svg" alt="Estado de publicación de macOS" /></a>
@@ -239,7 +239,7 @@ El build verifica la firma estructural y ejecuta una comprobación del binario: 
 
 ### 🏷️ Crear una versión y publicarla
 
-Necesitas **Node.js 18 o posterior**, Git y acceso de escritura al repositorio. Desde la raíz:
+Necesitas **Node.js 18 o posterior**, Git y **GitHub CLI (`gh`) instalado y autenticado**, con acceso al repositorio y GitHub Actions. El script comprueba ese acceso antes de crear commits o tags. Desde la raíz:
 
 ```bash
 node scripts/release.js
@@ -248,6 +248,10 @@ node scripts/release.js
 Elige **mayor**, **versión** o **parche** y describe los cambios. Para publicar la primera `1.0.0`, o si ya modificaste `VERSION`, elige **Actual**.
 
 El script muestra la rama, versión, tag y archivos pendientes antes de pedir confirmación. **Incluye todos los cambios no ignorados del proyecto**, crea el commit y el tag anotado y envía rama y tag juntos mediante un push atómico. No reemplaza tags ni hace push forzado.
+
+Después se encarga de la publicación completa: espera el workflow del tag y, si el push no lo activó, lo inicia automáticamente. Muestra el progreso de GitHub Actions y espera a que finalicen las compilaciones y la publicación. Solo anuncia la versión como disponible después de comprobar una Release estable con los DMG de ambas arquitecturas, incluidos los archivos con nombres fijos para las descargas dinámicas. Al terminar imprime los enlaces. **No necesitas lanzar Actions ni ejecutar otro comando manualmente.**
+
+Si falla la compilación, el comando termina con error y muestra la ejecución que falló; no anuncia instaladores inexistentes ni borra el tag publicado. Mantén abierta la terminal hasta que termine el seguimiento.
 
 Para simularlo sin modificar archivos, staging, commits ni tags:
 
@@ -267,6 +271,14 @@ Un tag **`vX.Y.Z`** activa [el workflow de publicación](.github/workflows/relea
 4. Adjunta únicamente archivos DMG a una Release en borrador: los instaladores versionados y una copia de cada arquitectura con nombre fijo para los enlaces dinámicos. La publica cuando ambas arquitecturas están disponibles. El actualizador de la aplicación sigue utilizando los nombres versionados.
 
 Una reejecución puede completar un borrador, pero no sustituye archivos de una Release ya publicada. Cada corrección requiere una nueva versión y un nuevo tag. Los tags sin Release o sin instaladores no se ofrecen como actualizaciones instalables.
+
+Si el tag existe pero el workflow no se ejecutó, puedes lanzar **Actions → Publicar WorkBreak para macOS → Run workflow**, seleccionar `main` e indicar el tag existente. También puedes usar el siguiente comando, una vez publicado en `main` el workflow con soporte de ejecución manual:
+
+```bash
+gh workflow run release-macos.yml --ref main -f tag=v1.0.0
+```
+
+La ejecución compila el código del tag indicado y comprueba su `VERSION`; no mueve ni reemplaza el tag. Espera a que la publicación finalice correctamente antes de probar los enlaces de descarga.
 
 Los enlaces de descarga no requieren cambios con cada versión. La insignia de versión del código puede actualizarse al preparar una nueva versión.
 

@@ -131,6 +131,71 @@ function parseArgs(args) {
   return options;
 }
 
+function gh(cwd, args, { interactive = false } = {}) {
+  return execFileSync('gh', args, { cwd, encoding: 'utf8',
+    stdio: interactive ? 'inherit' : ['ignore', 'pipe', 'pipe'],
+    ...(interactive ? {} : { timeout: 30_000 }) });
+}
+
+function prepareGitHub(cwd, run = gh) {
+  try {
+    run(cwd, ['auth', 'status']);
+    const { nameWithOwner } = JSON.parse(run(cwd, ['repo', 'view', '--json', 'nameWithOwner']));
+    if (!/^[\w.-]+\/[\w.-]+$/.test(nameWithOwner)) throw new Error('Repositorio GitHub inválido.');
+    run(cwd, ['api', `repos/${nameWithOwner}/actions/runs?per_page=1`]);
+    return nameWithOwner;
+  } catch (error) {
+    const detail = error.stderr ? String(error.stderr).trim() : error.message;
+    throw new Error(`No se puede preparar GitHub Actions. Necesitas GitHub CLI (gh) instalado y autenticado con acceso al repositorio y Actions.\n${detail}\nNo se han creado commits ni tags.`);
+  }
+}
+
+async function completeRelease(cwd, plan, repo, {
+  run = gh, sleep = ms => new Promise(resolve => setTimeout(resolve, ms)), attempts = 20,
+} = {}) {
+  const sha = git(cwd, 'rev-parse', `${plan.tag}^{commit}`);
+  const workflow = 'release-macos.yml';
+  async function findRun() {
+    for (let attempt = 0; attempt < attempts; attempt += 1) {
+      const runs = JSON.parse(run(cwd, ['run', 'list', '--repo', repo, '--workflow', workflow,
+        '--commit', sha, '--limit', '20', '--json', 'databaseId,event,headBranch,url']));
+      const found = runs.find(item => item.headBranch === plan.tag
+        && ['push', 'workflow_dispatch'].includes(item.event));
+      if (found) return found;
+      if (attempt + 1 < attempts) await sleep(3000);
+    }
+    return null;
+  }
+  console.log(`\nEsperando la compilación de ${plan.tag} para Intel y Apple Silicon…`);
+  let build = await findRun();
+  if (!build) {
+    console.log('El push no inició el workflow. Iniciándolo automáticamente para este tag…');
+    run(cwd, ['workflow', 'run', workflow, '--repo', repo, '--ref', plan.tag, '-f', `tag=${plan.tag}`]);
+    build = await findRun();
+  }
+  if (!build) throw new Error(`GitHub no registró la compilación de ${plan.tag}. El tag ya está publicado; no se ha reemplazado.`);
+  console.log(`Compilación: ${build.url}`);
+  try {
+    run(cwd, ['run', 'watch', String(build.databaseId), '--repo', repo, '--exit-status', '--interval', '10'],
+      { interactive: true });
+  } catch {
+    throw new Error(`La compilación/publicación de ${plan.tag} falló. No se confirma una descarga disponible. Revisa ${build.url}`);
+  }
+  const release = JSON.parse(run(cwd, ['api', `repos/${repo}/releases/tags/${plan.tag}`]));
+  const names = ['arm64', 'x86_64'].flatMap(arch => [
+    `WorkBreak-${plan.target}-macos-${arch}.dmg`, `WorkBreak-macos-${arch}.dmg`,
+  ]);
+  if (release.draft || release.prerelease || release.tag_name !== plan.tag
+      || !names.every(name => (release.assets || []).some(asset => asset.name === name && asset.state === 'uploaded'))) {
+    throw new Error(`La Release ${plan.tag} no está publicada con todos los DMG versionados y dinámicos. Revisa ${build.url}`);
+  }
+  console.log(`\n${plan.tag} lista para descargar: ${release.html_url}`);
+  for (const arch of ['arm64', 'x86_64']) {
+    console.log(`https://github.com/${repo}/releases/latest/download/WorkBreak-macos-${arch}.dmg`);
+  }
+  return release;
+}
+
 async function main(args = process.argv.slice(2)) {
   const options = parseArgs(args);
   if (options.help) {
@@ -162,12 +227,13 @@ async function main(args = process.argv.slice(2)) {
       console.log('\nSimulación terminada. No se modificó VERSION, no se crearon commits ni tags y no se publicó nada.');
       return;
     }
+    const repo = prepareGitHub(root);
     if ((await rl.question('\n¿Publicar esta versión y sus cambios? [s/N]: ')).trim().toLowerCase() !== 's') {
       console.log('Publicación cancelada.');
       return;
     }
     publishRelease(root, plan, description);
-    console.log(`\n${plan.tag} publicado. GitHub Actions generará los DMG Intel/Apple Silicon y la Release.\nhttps://github.com/vjose1903/workBreak/actions`);
+    await completeRelease(root, plan, repo);
   } finally {
     rl.close();
   }
@@ -180,4 +246,4 @@ if (require.main === module) {
   });
 }
 
-module.exports = { calculateVersion, checkTag, parseArgs, planRelease, publishRelease };
+module.exports = { calculateVersion, checkTag, parseArgs, planRelease, publishRelease, prepareGitHub, completeRelease };
