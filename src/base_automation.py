@@ -27,6 +27,17 @@ class PortapapelesNoDisponible(RuntimeError):
     """No se puede leer o atribuir con seguridad el contenido del portapapeles."""
 
 
+def _es_emergente(ventana, contenedora):
+    """True si `ventana` es más pequeña que `contenedora` y cabe por completo en ella."""
+    a, b = ventana.get('kCGWindowBounds'), contenedora.get('kCGWindowBounds')
+    if not a or not b:
+        return False
+    x, y, ancho, alto = (a.get(clave, 0) for clave in ('X', 'Y', 'Width', 'Height'))
+    cx, cy, cancho, calto = (b.get(clave, 0) for clave in ('X', 'Y', 'Width', 'Height'))
+    return (cx <= x and cy <= y and x + ancho <= cx + cancho and y + alto <= cy + calto
+            and ancho * alto < cancho * calto)
+
+
 class BaseAutomation:
     def __init__(self):
         pyautogui.FAILSAFE = True
@@ -265,11 +276,21 @@ class BaseAutomation:
             return win32gui.GetForegroundWindow()
         if self.is_mac:
             import Quartz as q
-            ventanas = q.CGWindowListCopyWindowInfo(
-                q.kCGWindowListOptionOnScreenOnly, q.kCGNullWindowID)
-            for ventana in ventanas or []:
-                if ventana.get('kCGWindowLayer') == 0:
-                    return ventana.get('kCGWindowNumber')
+            ventanas = [v for v in q.CGWindowListCopyWindowInfo(
+                q.kCGWindowListOptionOnScreenOnly, q.kCGNullWindowID) or []
+                if v.get('kCGWindowLayer') == 0]
+            if ventanas:
+                # Las ventanas superiores de la misma app que caben dentro de otra mayor son
+                # emergentes (sugerencias de la barra de direcciones, tooltips): no cambian el foco.
+                pid = ventanas[0].get('kCGWindowOwnerPID')
+                propias = []
+                for ventana in ventanas:
+                    if ventana.get('kCGWindowOwnerPID') != pid:
+                        break
+                    propias.append(ventana)
+                for indice, ventana in enumerate(propias):
+                    if not any(_es_emergente(ventana, otra) for otra in propias[indice + 1:]):
+                        return ventana.get('kCGWindowNumber')
         raise RuntimeError('No se pudo identificar la ventana activa')
 
     # ------------------------------------------------------------

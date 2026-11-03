@@ -147,6 +147,48 @@ class AutomationSafetyTest(unittest.TestCase):
             self.editor._antes_accion()
         cuarzo.CGWindowListCopyWindowInfo.assert_called_once()
 
+    def test_emergente_del_navegador_no_cambia_la_identidad_de_la_ventana(self):
+        cuarzo = MagicMock()
+        principal = {'kCGWindowLayer': 0, 'kCGWindowNumber': 7, 'kCGWindowOwnerPID': 50,
+                     'kCGWindowBounds': {'X': 3712, 'Y': 0, 'Width': 1920, 'Height': 1080}}
+        sugerencias = {'kCGWindowLayer': 0, 'kCGWindowNumber': 99, 'kCGWindowOwnerPID': 50,
+                       'kCGWindowBounds': {'X': 3800, 'Y': 80, 'Width': 900, 'Height': 300}}
+        otra_app = {'kCGWindowLayer': 0, 'kCGWindowNumber': 3, 'kCGWindowOwnerPID': 60,
+                    'kCGWindowBounds': {'X': 3712, 'Y': 0, 'Width': 1920, 'Height': 1080}}
+        self.editor.is_windows = False
+        self.editor.is_mac = True
+        with patch.dict(sys.modules, {'Quartz': cuarzo}):
+            cuarzo.CGWindowListCopyWindowInfo.return_value = [principal, otra_app]
+            sin_emergente = self.editor.identidad_ventana_activa()
+            cuarzo.CGWindowListCopyWindowInfo.return_value = [sugerencias, principal, otra_app]
+            con_emergente = self.editor.identidad_ventana_activa()
+            # Una ventana pequeña de otra app delante sí es un cambio de foco.
+            cuarzo.CGWindowListCopyWindowInfo.return_value = [dict(sugerencias, kCGWindowOwnerPID=60), principal]
+            otra = self.editor.identidad_ventana_activa()
+        self.assertEqual((sin_emergente, con_emergente, otra), (7, 7, 99))
+
+    def test_reintento_tras_error_reutiliza_la_pestana_del_bot(self):
+        url = 'https://example.com'
+        with patch.object(self.web, 'activar_navegador', return_value=True), \
+                patch.object(self.web, 'copiar_al_portapapeles', return_value=True), \
+                patch.object(self.web, '_leer_url_actual', return_value=url), \
+                patch.object(self.web, 'interactuar_con_pagina', side_effect=[RuntimeError('fallo'), None]) as interactuar:
+            with self.assertRaises(RuntimeError):
+                self.web._procesar_pagina(url)
+            self.web._procesar_pagina(url)
+        self.assertEqual(teclado.hotkey.call_args_list.count(unittest.mock.call(self.web.cmd_key, 't')), 1)
+        self.assertEqual(interactuar.call_count, 2)
+
+    def test_pestana_del_bot_cambiada_abre_una_nueva(self):
+        url = 'https://example.com'
+        with patch.object(self.web, 'activar_navegador', return_value=True), \
+                patch.object(self.web, 'copiar_al_portapapeles', return_value=True), \
+                patch.object(self.web, '_leer_url_actual', side_effect=[url, 'https://otro.example', url]), \
+                patch.object(self.web, 'interactuar_con_pagina'):
+            self.web._procesar_pagina(url)
+            self.web._procesar_pagina(url)
+        self.assertEqual(teclado.hotkey.call_args_list.count(unittest.mock.call(self.web.cmd_key, 't')), 2)
+
     def test_mouse_editor_no_envia_eventos_si_cambia_ventana(self):
         self.editor._ventana_mouse_editor = 12
         with patch.object(self.editor, 'identidad_ventana_activa', return_value=13):
@@ -172,6 +214,9 @@ class AutomationSafetyTest(unittest.TestCase):
         historial.start()
         self.addCleanup(historial.stop)
         teclado.reset_mock(side_effect=True)
+        # patch.object(teclado, ...) restaura el hijo fuera de _mock_children y reset_mock no lo alcanza.
+        for nombre in ('hotkey', 'press', 'write', 'click', 'scroll', 'moveTo'):
+            getattr(teclado, nombre).reset_mock(side_effect=True)
         teclado.size.return_value = (1920, 1080)
         self.editor = EditorInteractor(StatisticsTracker())
         self.web = WebInteractor(StatisticsTracker())
@@ -214,6 +259,10 @@ class AutomationSafetyTest(unittest.TestCase):
         direccion = patch.object(self.web, '_leer_url_actual', return_value='https://example.com')
         direccion.start()
         self.addCleanup(direccion.stop)
+        # Nunca consultar el navegador real con AppleScript.
+        silenciosa = patch.object(self.web, '_leer_url_silenciosa', return_value=None)
+        silenciosa.start()
+        self.addCleanup(silenciosa.stop)
 
     def test_seleccion_con_salto_o_vecina_no_autoriza_reemplazo(self):
         for seleccion in ['abc\n', 'abc\ndef', 'ab', None]:
@@ -261,14 +310,44 @@ class AutomationSafetyTest(unittest.TestCase):
     def test_cambio_de_url_o_ventana_cancela_los_clicks(self):
         self.web._ventana_web = 1
         self.web._url_interaccion = 'https://example.com'
-        with patch.object(self.web, '_leer_url_actual', return_value='https://otra.example'):
+        with patch.object(self.web, '_leer_url_silenciosa', return_value='https://otra.example'):
             with self.assertRaises(RuntimeError):
                 WebInteractor._confirmar_destino_web(self.web)
         with patch.object(self.web, 'identidad_ventana_activa', return_value=2), \
-                patch.object(self.web, '_leer_url_actual') as leer:
+                patch.object(self.web, '_leer_url_silenciosa') as leer:
             with self.assertRaises(RuntimeError):
                 WebInteractor._confirmar_destino_web(self.web)
             leer.assert_not_called()
+
+    def test_comprobar_destino_no_abre_la_barra_de_direcciones(self):
+        self.web._ventana_web = 1
+        self.web._url_interaccion = 'https://example.com'
+        with patch.object(self.web, '_leer_url_silenciosa', return_value='https://example.com'):
+            WebInteractor._confirmar_destino_web(self.web)
+        # Sin lectura silenciosa (Firefox, Opera o sin permiso) tampoco se usa la barra.
+        WebInteractor._confirmar_destino_web(self.web)
+        self.web._leer_url_actual.assert_not_called()
+        teclado.hotkey.assert_not_called()
+
+    def test_url_silenciosa_sin_permiso_no_se_reintenta(self):
+        self.web.is_mac = True
+        error = subprocess.CalledProcessError(1, 'osascript', stderr='-1743')
+        with patch.object(self.web, '_ejecutar_proceso', side_effect=error) as ejecutar:
+            self.assertIsNone(WebInteractor._leer_url_silenciosa(self.web))
+            self.assertIsNone(WebInteractor._leer_url_silenciosa(self.web))
+        ejecutar.assert_called_once()
+
+    def test_clicks_consecutivos_quedan_alejados(self):
+        self.web._area_mouse = (0, 0, 1000, 800)
+        self.web._ultimo_click = (500, 400)
+        minimo = self.web._distancia_minima_click()
+        for _ in range(50):
+            destino = self.web._destino_lejano(500, 400)
+            self.assertGreaterEqual(((destino[0] - 500) ** 2 + (destino[1] - 400) ** 2) ** .5, minimo)
+        teclado.position.return_value = (520, 410)
+        self.assertFalse(self.web._lejos_del_ultimo_click())
+        teclado.position.return_value = (900, 100)
+        self.assertTrue(self.web._lejos_del_ultimo_click())
 
     def test_fuente_fallida_conserva_codigo_y_no_pega(self):
         self.editor._portapapeles_original = 'usuario'

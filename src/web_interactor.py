@@ -1,4 +1,5 @@
 import logging
+import math
 import pyautogui
 import subprocess
 import time
@@ -30,6 +31,12 @@ class WebInteractor(BaseAutomation):
         self._contexto = None
         self._ventana_web = None
         self._url_interaccion = None
+        self._pestana_bot = None
+        self._url_silenciosa_disponible = True
+        self._ultimo_click = None
+
+        # Navegadores con diccionario AppleScript de Chromium: su URL se lee sin tocar la barra.
+        self.url_applescript = {'chrome', 'edge'}
 
         # Configuración de navegadores y comandos
         self.browser_configs = {
@@ -133,6 +140,28 @@ class WebInteractor(BaseAutomation):
             self._indice_pagina = 0
         self._turno_restante = None
 
+    def _leer_url_silenciosa(self) -> Optional[str]:
+        """URL de la pestaña activa vía AppleScript; None si el navegador no lo permite."""
+        if not (self.is_mac and self.browser in self.url_applescript and self._url_silenciosa_disponible):
+            return None
+        nombre = self.browser_configs[self.browser]['mac']
+        try:
+            resultado = self._ejecutar_proceso(
+                ['osascript', '-e', f'tell application "{nombre}" to get URL of active tab of front window'],
+                capture_output=True, text=True, check=True, timeout=5)
+        except subprocess.CalledProcessError as e:
+            # Sin permiso de Automatización: no reintentar en cada acción.
+            self._url_silenciosa_disponible = False
+            logging.warning(f"No se pudo leer la URL de {nombre} sin la barra de direcciones: {(e.stderr or '').strip()}")
+            return None
+        except subprocess.TimeoutExpired:
+            return None
+        return resultado.stdout.strip() or None
+
+    def _url_pestana(self):
+        """Lee la URL sin tocar la barra cuando se puede; si no, con la barra de direcciones."""
+        return self._leer_url_silenciosa() or self._leer_url_actual()
+
     def _leer_url_actual(self):
         marcador = "workbreak:sin-url"
         if not self.copiar_al_portapapeles(marcador):
@@ -157,6 +186,7 @@ class WebInteractor(BaseAutomation):
                         'pagina': pagina, 'url': pagina}
             self._contexto = contexto
         interrumpido = False
+        reutilizable = False
         try:
             if not self._queda_tiempo(tiempo_final):
                 return False
@@ -165,6 +195,8 @@ class WebInteractor(BaseAutomation):
             if not self._queda_tiempo(tiempo_final):
                 return False
 
+            if not contexto['abierta'] and self._reutilizar_pestana(contexto, pagina):
+                logging.info("Se reutiliza la pestaña abierta por el bot")
             if not contexto['abierta']:
                 self._hotkey(self.cmd_key, 't')
                 contexto['abierta'] = True
@@ -185,15 +217,17 @@ class WebInteractor(BaseAutomation):
                 contexto.update(navegada=True, pagina=pagina, url=pagina)
                 logging.info(f"Navegando a {pagina}")
                 self._esperar(2)
-                contexto['url'] = self._leer_url_actual()
+                contexto['url'] = self._url_pestana()
                 contexto['navegacion_pendiente'] = False
 
+            reutilizable = True
             if self._queda_tiempo(tiempo_final):
                 self.interactuar_con_pagina(pagina, tiempo_final)
             # Los clics del propio bot pueden navegar: conservar la dirección resultante.
             if contexto['intervenida']:
-                contexto['url'] = self._leer_url_actual()
+                contexto['url'] = self._url_pestana()
         except NavegacionCambiada:
+            reutilizable = False
             logging.info('La página navegó durante la interacción; se conserva la pestaña y finaliza la visita')
         except PausaPorActividad:
             contexto['intervenida'] = True
@@ -204,9 +238,26 @@ class WebInteractor(BaseAutomation):
             raise
         finally:
             if contexto['abierta'] and not interrumpido and not contexto['intervenida']:
-                # La activación del navegador no confirma la pestaña creada por el bot.
+                # La activación no confirma la pestaña: la próxima visita la reutiliza solo
+                # si la pestaña activa sigue en la dirección que dejó el bot.
                 self._contexto = None
-                logging.info("Visita finalizada; pestaña conservada al no poder confirmar su identidad")
+                self._pestana_bot = ({'pagina': contexto['pagina'], 'url': contexto['url']}
+                                     if reutilizable else None)
+                logging.info("Visita finalizada; pestaña conservada")
+
+    def _reutilizar_pestana(self, contexto, pagina) -> bool:
+        """Evita abrir una pestaña nueva en cada visita o reintento."""
+        anterior, self._pestana_bot = self._pestana_bot, None
+        if anterior is None:
+            return False
+        try:
+            actual = self._url_pestana()
+        except RuntimeError:
+            return False
+        if actual != anterior['url']:
+            return False
+        contexto.update(abierta=True, navegada=anterior['pagina'] == pagina, pagina=pagina, url=actual)
+        return True
 
     def interactuar_con_pagina(self, pagina, tiempo_turno=float("inf")):
         """Interactúa con una página abierta en el navegador"""
@@ -228,28 +279,27 @@ class WebInteractor(BaseAutomation):
                 return
             config = self.browser_configs[self.browser]
             self._ventana_web = self.identidad_ventana_activa()
-            self._url_interaccion = self._leer_url_actual()
+            # Sin lectura silenciosa no se comprueba la URL durante la visita: abrir la barra
+            # de direcciones antes de cada acción interrumpe la página.
+            self._url_interaccion = self._leer_url_silenciosa()
+            self._ultimo_click = None
             center_x, center_y = self._configurar_area_mouse(self.rectangulo_aplicacion(config['mac']))
             if self.acciones['mover_mouse']:
                 self._move_to(center_x, center_y, duration=0.3)
             if self.acciones['click'] and self._mouse_en_area_segura():
-                self._click()
+                self._click_registrado()
 
             while self._queda_tiempo(tiempo_final):
                 self._confirmar_destino_web()
                 center_x, center_y = self._configurar_area_mouse(
                     self.rectangulo_aplicacion(config['mac']))
                 # Cada acción respeta su configuración independiente.
-                x_offset = random.randint(-30, 30)
-                y_offset = random.randint(-30, 30)
-                target_x = center_x + x_offset
-                target_y = center_y + y_offset
-
                 if self.acciones['mover_mouse']:
-                    self._move_to(target_x, target_y, duration=0.5)
+                    target_x, target_y = self._destino_lejano(center_x, center_y)
+                    self._move_to(target_x, target_y, duration=random.uniform(0.6, 1.2))
                 if self._mouse_en_area_segura():
-                    if self.acciones['click']:
-                        self._click()
+                    if self.acciones['click'] and (not self.acciones['mover_mouse'] or self._lejos_del_ultimo_click()):
+                        self._click_registrado()
                     if self.acciones['scroll']:
                         self._scroll(random.randint(-300, 300))
                 self._esperar(random.uniform(1, 3))
@@ -271,6 +321,38 @@ class WebInteractor(BaseAutomation):
             self._ventana_web = None
             self._url_interaccion = None
             self.registrar_tiempo_interaccion(pagina, tiempo_inicio)
+
+    def _distancia_minima_click(self):
+        if self._area_mouse is None:
+            return 0
+        izquierda, arriba, derecha, abajo = self._area_mouse
+        return max(150, 0.35 * min(derecha - izquierda, abajo - arriba))
+
+    def _lejos_del_ultimo_click(self):
+        if self._ultimo_click is None:
+            return True
+        x, y = self._posicion_mouse()
+        return math.dist((x, y), self._ultimo_click) >= self._distancia_minima_click()
+
+    def _destino_lejano(self, center_x, center_y):
+        """Punto aleatorio del área segura alejado del último click."""
+        if self._area_mouse is None:
+            return center_x + random.randint(-30, 30), center_y + random.randint(-30, 30)
+        izquierda, arriba, derecha, abajo = self._area_mouse
+        minimo = self._distancia_minima_click()
+        mejor, mejor_distancia = None, -1
+        for _ in range(20):
+            punto = (random.randint(izquierda, derecha), random.randint(arriba, abajo))
+            distancia = math.dist(punto, self._ultimo_click) if self._ultimo_click else float('inf')
+            if distancia >= minimo:
+                return punto
+            if distancia > mejor_distancia:
+                mejor, mejor_distancia = punto, distancia
+        return mejor
+
+    def _click_registrado(self):
+        self._click()
+        self._ultimo_click = self._posicion_mouse()
 
     def _antes_accion(self):
         super()._antes_accion()
@@ -294,7 +376,10 @@ class WebInteractor(BaseAutomation):
     def _confirmar_destino_web(self):
         if self.identidad_ventana_activa() != self._ventana_web:
             raise RuntimeError('Cambió la ventana del navegador; se cancela la interacción')
-        if self._leer_url_actual() != self._url_interaccion:
+        if self._url_interaccion is None:
+            return
+        actual = self._leer_url_silenciosa()
+        if actual is not None and actual != self._url_interaccion:
             raise NavegacionCambiada('Cambió la dirección del navegador; se finaliza la visita')
 
     def _queda_tiempo(self, tiempo_final) -> bool:
