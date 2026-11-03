@@ -32,6 +32,8 @@ class MonitorActividad:
         self._thread_id = None
         self._pulsadas = set()
         self._esta_pulsada = None
+        self._pulsadas_fisicas = None
+        self._gracia_comprobada = False
         self.comprobar_emergencia = None
         self.solicitar_detencion = solicitar_detencion
         self.informar_pausa = informar_pausa
@@ -59,13 +61,13 @@ class MonitorActividad:
     def registrar(self, identificador=None, pulsada=None):
         with self._condicion:
             ahora = time.monotonic()
-            if self._detectar_desde is not None and ahora < self._detectar_desde:
-                return
             if identificador is not None:
                 if pulsada:
                     self._pulsadas.add(identificador)
                 else:
                     self._pulsadas.discard(identificador)
+            if self._detectar_desde is not None and ahora < self._detectar_desde:
+                return
             self._ultima = ahora
             self._version += 1
             self._condicion.notify_all()
@@ -75,6 +77,18 @@ class MonitorActividad:
         with self._condicion:
             if self._error is not None:
                 raise RuntimeError(f"El monitor de actividad dejó de funcionar: {self._error}")
+            if (self._detectar_desde is not None and time.monotonic() >= self._detectar_desde
+                    and not self._gracia_comprobada):
+                if self._pulsadas_fisicas is not None:
+                    self._pulsadas.update(self._pulsadas_fisicas())
+                self._gracia_comprobada = True
+            if (self._detectar_desde is not None and time.monotonic() >= self._detectar_desde
+                    and self._version == self._reanudada and self._pulsadas):
+                if self._esta_pulsada is not None:
+                    self._pulsadas = {tecla for tecla in self._pulsadas if self._esta_pulsada(tecla)}
+                if self._pulsadas:
+                    self._ultima = time.monotonic()
+                    self._version += 1
             if self._version != self._reanudada:
                 raise PausaPorActividad()
 
@@ -186,6 +200,16 @@ class MonitorActividad:
             return bool(q.CGEventSourceFlagsState(q.kCGEventSourceStateHIDSystemState) & codigo)
 
         self._esta_pulsada = esta_pulsada
+        def pulsadas_fisicas():
+            # El bloqueo de mayúsculas no debe interpretarse como actividad mantenida.
+            teclas = [('tecla', codigo) for codigo in range(128) if codigo != 0x39 and esta_pulsada(('tecla', codigo))]
+            botones = [('mouse', codigo) for codigo in range(8) if esta_pulsada(('mouse', codigo))]
+            mascaras = (q.kCGEventFlagMaskCommand, q.kCGEventFlagMaskControl, q.kCGEventFlagMaskShift,
+                        q.kCGEventFlagMaskAlternate, q.kCGEventFlagMaskSecondaryFn)
+            modificadores = [('modificador', mascara) for mascara in mascaras
+                             if esta_pulsada(('modificador', mascara))]
+            return teclas + botones + modificadores
+        self._pulsadas_fisicas = pulsadas_fisicas
 
         tipos = (q.kCGEventKeyDown, q.kCGEventKeyUp, q.kCGEventFlagsChanged,
                  q.kCGEventMouseMoved, q.kCGEventLeftMouseDown, q.kCGEventLeftMouseUp,
@@ -255,6 +279,10 @@ class MonitorActividad:
         botones_fisicos = {0: 1, 1: 2, 2: 4, 3: 5, 4: 6}
         self._esta_pulsada = lambda tecla: bool(usuario.GetAsyncKeyState(
             botones_fisicos[tecla[1]] if tecla[0] == 'mouse' else tecla[1]) & 0x8000)
+        self._pulsadas_fisicas = lambda: (
+            [('tecla', codigo) for codigo in range(1, 256) if codigo not in botones_fisicos.values()
+             and self._esta_pulsada(('tecla', codigo))]
+            + [('mouse', codigo) for codigo in botones_fisicos if self._esta_pulsada(('mouse', codigo))])
         callback_type = c.WINFUNCTYPE(c.c_ssize_t, c.c_int, w.WPARAM, w.LPARAM)
 
         class Teclado(c.Structure):

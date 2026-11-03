@@ -6,7 +6,7 @@ const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 const { execFileSync } = require('node:child_process');
-const { calculateVersion, checkTag, parseArgs, planRelease, publishRelease, prepareGitHub, completeRelease } = require('../scripts/release.js');
+const { calculateVersion, checkTag, parseArgs, planRelease, publishRelease } = require('../scripts/release.js');
 
 function git(cwd, ...args) {
   return execFileSync('git', args, { cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }).trim();
@@ -145,89 +145,6 @@ test('un hook que cambia VERSION no permite publicar un tag incorrecto', t => {
   assert.equal(git(origin, 'tag', '--list'), '');
 });
 
-function publication(t) {
-  const { root } = repository(t);
-  const plan = planRelease(root, 'parche');
-  publishRelease(root, plan, 'Prueba de publicación completa');
-  const repo = 'example/workBreak';
-  const build = { databaseId: 123, event: 'push', headBranch: plan.tag,
-    url: `https://github.com/${repo}/actions/runs/123` };
-  const release = { tag_name: plan.tag, draft: false, prerelease: false,
-    html_url: `https://github.com/${repo}/releases/tag/${plan.tag}`,
-    assets: ['arm64', 'x86_64'].flatMap(arch => [
-      { name: `WorkBreak-${plan.target}-macos-${arch}.dmg`, state: 'uploaded' },
-      { name: `WorkBreak-macos-${arch}.dmg`, state: 'uploaded' },
-    ]) };
-  const calls = [];
-  const run = (_cwd, args) => {
-    calls.push(args);
-    if (args[0] === 'run' && args[1] === 'list') return JSON.stringify([build]);
-    if (args[0] === 'api') return JSON.stringify(release);
-    return '';
-  };
-  return { root, plan, repo, build, release, calls, run };
-}
-
-test('comprueba gh y acceso a Actions antes de modificar Git', () => {
-  const calls = [];
-  assert.equal(prepareGitHub('/checkout', (_cwd, args) => {
-    calls.push(args);
-    return args[0] === 'repo' ? JSON.stringify({ nameWithOwner: 'example/workBreak' }) : '{}';
-  }), 'example/workBreak');
-  assert.equal(calls.length, 3);
-  assert.throws(() => prepareGitHub('/checkout', () => { throw new Error('gh no disponible'); }),
-    /No se han creado commits ni tags/);
-});
-
-test('espera el workflow del push y comprueba los cuatro DMG sin duplicar la ejecución', async t => {
-  const p = publication(t);
-  assert.deepEqual(await completeRelease(p.root, p.plan, p.repo, { run: p.run, attempts: 1 }), p.release);
-  assert.ok(p.calls.some(args => args[0] === 'run' && args[1] === 'watch' && args.includes('--exit-status')));
-  assert.ok(!p.calls.some(args => args[0] === 'workflow'));
-});
-
-test('inicia automáticamente el workflow si el push no lo activó', async t => {
-  const p = publication(t);
-  let dispatched = false;
-  const run = (cwd, args) => {
-    if (args[0] === 'run' && args[1] === 'list' && !dispatched) return '[]';
-    if (args[0] === 'workflow') dispatched = true;
-    return p.run(cwd, args);
-  };
-  await completeRelease(p.root, p.plan, p.repo, { run, attempts: 1 });
-  const dispatch = p.calls.find(args => args[0] === 'workflow');
-  assert.ok(dispatch.includes(p.plan.tag));
-  assert.ok(dispatch.includes(`tag=${p.plan.tag}`));
-});
-
-test('ignora ejecuciones de otro tag incluso si comparten commit', async t => {
-  const p = publication(t);
-  p.build.headBranch = 'v9.9.9';
-  await assert.rejects(completeRelease(p.root, p.plan, p.repo, { run: p.run, attempts: 1 }),
-    /no registró la compilación/);
-});
-
-test('un fallo de Actions no se anuncia como publicación disponible', async t => {
-  const p = publication(t);
-  const run = (cwd, args) => {
-    if (args[0] === 'run' && args[1] === 'watch') throw new Error('Workflow fallido');
-    return p.run(cwd, args);
-  };
-  await assert.rejects(completeRelease(p.root, p.plan, p.repo, { run, attempts: 1 }), /falló/);
-  assert.ok(!p.calls.some(args => args[0] === 'api'));
-});
-
-test('rechaza Release en borrador, prerelease, de otro tag o con DMG sin subir', async t => {
-  const p = publication(t);
-  for (const cambio of [{ draft: true }, { prerelease: true }, { tag_name: 'v9.9.9' },
-    { assets: p.release.assets.slice(1) },
-    { assets: p.release.assets.map(asset => ({ ...asset, state: 'new' })) }]) {
-    const run = (cwd, args) => args[0] === 'api'
-      ? JSON.stringify({ ...p.release, ...cambio }) : p.run(cwd, args);
-    await assert.rejects(completeRelease(p.root, p.plan, p.repo, { run, attempts: 1 }), /no está publicada/);
-  }
-});
-
 test('reanuda un tag inmutable del HEAD limpio y rechaza cambios pendientes', t => {
   const { root } = repository(t);
   git(root, 'tag', '-a', 'v1.0.0', '-m', 'Versión inicial');
@@ -241,12 +158,26 @@ test('reanuda un tag inmutable del HEAD limpio y rechaza cambios pendientes', t 
   assert.throws(() => planRelease(root, 'actual'), /ya existe/);
 });
 
-test('reanudar reintenta Actions fallido antes de seguir la publicación', async t => {
-  const fixture = publication(t);
-  fixture.plan.resume = true;
-  fixture.build.conclusion = 'failure';
-  await completeRelease(fixture.root, fixture.plan, fixture.repo, { run: fixture.run, sleep: async () => {} });
-  const rerun = fixture.calls.findIndex(args => args[0] === 'run' && args[1] === 'rerun');
-  const watch = fixture.calls.findIndex(args => args[0] === 'run' && args[1] === 'watch');
-  assert.ok(rerun >= 0 && watch > rerun);
+test('el comando termina tras subir commit y tag sin esperar Actions', t => {
+  const { root, origin } = repository(t);
+  fs.mkdirSync(path.join(root, 'scripts'));
+  fs.copyFileSync(path.resolve(__dirname, '../scripts/release.js'), path.join(root, 'scripts/release.js'));
+  const output = execFileSync(process.execPath,
+    ['scripts/release.js', '--kind', 'parche', '--description', 'Publicación sin espera'],
+    { cwd: root, input: 's\n', encoding: 'utf8', timeout: 15000 });
+  assert.match(output, /Commit y tag v1\.0\.1 enviados a origin/);
+  assert.match(output, /segundo plano/);
+  assert.doesNotMatch(output, /Esperando la compilación/);
+  assert.equal(git(origin, 'show', 'v1.0.1:VERSION'), '1.0.1');
+  assert.equal(git(origin, 'rev-parse', 'main'), git(root, 'rev-parse', 'HEAD'));
+});
+
+test('reanudar rechaza un tag modificado después de preparar el plan', t => {
+  const { root, origin } = repository(t);
+  git(root, 'commit', '--allow-empty', '-m', 'Otro commit');
+  git(root, 'tag', 'v1.0.0');
+  const plan = planRelease(root, 'actual');
+  git(root, 'tag', '-f', 'v1.0.0', 'HEAD~1');
+  assert.throws(() => publishRelease(root, plan, 'Reanudar'), /tag local cambió/);
+  assert.equal(git(origin, 'tag', '--list'), '');
 });

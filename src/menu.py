@@ -1,6 +1,5 @@
 import json
 import logging
-import math
 import os
 import tempfile
 from dataclasses import dataclass, field
@@ -9,8 +8,10 @@ from pathlib import Path
 from typing import Any, List, Optional
 
 from code_generator import CodeGenerator
+from editor_catalog import EDITORES
 from code_source import RealProjectSource
-from app_paths import ruta_historial
+from app_paths import ruta_historial, leer_json, MAX_JSON_BYTES
+from urllib.parse import urlsplit
 
 NAVEGADORES_VALIDOS = ["chrome", "edge", "opera", "firefox"]
 NAVEGADOR_NINGUNO = {"ninguno", "none", "no", "0", ""}
@@ -22,10 +23,54 @@ FASES_EDITOR = {
     "mouse": "Solo mouse",
 }
 
+ACCIONES_EDITOR = {'escribir': 'Escribir', 'click': 'Click', 'scroll': 'Scroll', 'mover_mouse': 'Mover mouse'}
+ACCIONES_WEB = {clave: titulo for clave, titulo in ACCIONES_EDITOR.items() if clave != 'escribir'}
+
+
+def acciones_config(registro, entorno):
+    """Las configuraciones antiguas conservan las acciones de sus fases."""
+    opciones = ACCIONES_EDITOR if entorno == 'editor' else ACCIONES_WEB
+    guardadas = registro.get('acciones_' + entorno)
+    if guardadas is not None:
+        return {clave: guardadas.get(clave, True) for clave in opciones}
+    fases = registro.get('fases', 'ambas')
+    return {clave: (fases != 'mouse' if clave == 'escribir' else fases != 'escritura')
+            if entorno == 'editor' else True for clave in opciones}
+
+
+def validar_acciones_ejecucion(registro):
+    modo = registro.get('modo', 'ambos')
+    editor = modo != 'web' and any(acciones_config(registro, 'editor').values())
+    web = modo != 'editor' and any(acciones_config(registro, 'web').values())
+    if web and (modo == 'web' or registro.get('paginas')) and not registro.get('browser'):
+        raise ValueError('Selecciona un navegador para utilizar las webs configuradas.')
+    if modo == 'web' and web and not any(p.strip() for p in registro.get('paginas', [])):
+        raise ValueError('Para usar solo navegador selecciona un navegador y al menos una web.')
+    web = web and bool(registro.get('browser') and registro.get('paginas'))
+    if not editor and not web:
+        raise ValueError('Activa al menos una acción en el editor o en un navegador con webs configuradas.')
+    return editor, web
+
+
 RUTA_HISTORIAL = ruta_historial()
 
 
 MAX_MINUTOS = (9999 * 3600 + 59 * 60 + 59) / 60
+
+
+def normalizar_web(texto):
+    if not isinstance(texto, str) or len(texto) > 8192 or any(ord(c) < 32 or ord(c) == 127 for c in texto.strip()):
+        raise ValueError('Dirección web inválida o demasiado larga')
+    entrada = texto.strip()
+    url = entrada if '://' in entrada else 'https://' + entrada
+    try:
+        partes = urlsplit(url)
+        partes.port
+    except ValueError as error:
+        raise ValueError(f'Dirección web inválida: {entrada}') from error
+    if partes.scheme not in ('http', 'https') or not partes.hostname or any(c.isspace() for c in url):
+        raise ValueError(f'Dirección web inválida: {entrada}')
+    return url
 
 
 def tiempo_valido(minutos):
@@ -42,7 +87,7 @@ def formatear_tiempo(minutos):
 @dataclass
 class Configuracion:
     """Configuración completa del bot, construida desde el menú interactivo o los args CLI."""
-    editor: str = field(default="vsCode", init=False)
+    editor: str = "vsCode"
     browser: Optional[str] = None
     paginas: List[str] = field(default_factory=list)
     fuente: Any = None
@@ -52,14 +97,27 @@ class Configuracion:
     modo: str = "ambos"
     directorio: Optional[str] = None
     nombres_web: dict = field(default_factory=dict)
+    acciones_editor: Optional[dict] = None
+    acciones_web: Optional[dict] = None
 
     def __post_init__(self):
+        if self.editor not in EDITORES:
+            raise ValueError("Editor no compatible")
+        if not tiempo_valido(self.tiempo):
+            raise ValueError('Tiempo de ejecución fuera de rango')
         if self.modo not in MODOS_INTERACCION:
             raise ValueError("Modo de interacción inválido")
         if self.fuente is None:
             self.fuente = CodeGenerator()
         if self.fases not in FASES_EDITOR:
             self.fases = "ambas"
+        registro = vars(self)
+        for entorno, opciones in (('editor', ACCIONES_EDITOR), ('web', ACCIONES_WEB)):
+            acciones = registro['acciones_' + entorno]
+            if acciones is not None and (not isinstance(acciones, dict)
+                    or any(clave not in opciones or type(valor) is not bool for clave, valor in acciones.items())):
+                raise ValueError('Acciones inválidas para ' + entorno)
+            setattr(self, 'acciones_' + entorno, acciones_config(registro, entorno))
 
     def resumen(self) -> str:
         tiempo_str = formatear_tiempo(self.tiempo)
@@ -69,7 +127,8 @@ class Configuracion:
             f"  Navegador     : {self.browser or 'ninguno'}\n"
             f"  Webs          : {', '.join(self.paginas) if self.paginas else 'ninguna'}\n"
             f"  Fuente código : {self.fuente_descripcion}\n"
-            f"  Fases editor  : {FASES_EDITOR[self.fases]}\n"
+            f"  Acciones editor: {', '.join(t for k, t in ACCIONES_EDITOR.items() if self.acciones_editor[k]) or 'Ninguna'}\n"
+            f"  Acciones web  : {', '.join(t for k, t in ACCIONES_WEB.items() if self.acciones_web[k]) or 'Ninguna'}\n"
             f"  Tiempo        : {tiempo_str}"
         )
 
@@ -140,16 +199,10 @@ def _seleccionar_tiempo(config: Configuracion) -> None:
     except ValueError:
         print("  No es un número; se mantiene la configuración actual")
         return
-    config.tiempo = tiempo if tiempo > 0 else None
-
-
-def _seleccionar_fases(config: Configuracion) -> None:
-    print("\n  Fases del editor:")
-    print("    1 = Escritura y mouse")
-    print("    2 = Solo escritura")
-    print("    3 = Solo mouse")
-    opcion = _preguntar("  Opción: ", {"1", "2", "3"})
-    config.fases = {"1": "ambas", "2": "escritura", "3": "mouse"}[opcion]
+    if tiempo < 0 or (tiempo and not tiempo_valido(tiempo)):
+        print('  Tiempo fuera de rango; se mantiene la configuración actual')
+        return
+    config.tiempo = tiempo or None
 
 
 def menu_interactivo() -> Optional[Configuracion]:
@@ -170,11 +223,12 @@ def menu_interactivo() -> Optional[Configuracion]:
         print("  [3] Elegir fuente de código")
         print("  [4] Definir tiempo (minutos)")
         print("  [5] Usar configuración previa")
-        print("  [6] Elegir fases del editor")
+        print("  [6] Acciones del editor")
         print("  [7] INICIAR BOT")
         print("  [8] Salir")
         print("  [9] Elegir interacción: editor, navegador o ambos")
-        opcion = _preguntar("  Opción: ", {"1", "2", "3", "4", "5", "6", "7", "8", "9"})
+        print("  [10] Acciones del navegador")
+        opcion = _preguntar("  Opción: ", {str(i) for i in range(1, 11)})
 
         if opcion == "1":
             _seleccionar_navegador(config)
@@ -186,12 +240,17 @@ def menu_interactivo() -> Optional[Configuracion]:
             _seleccionar_tiempo(config)
         elif opcion == "5":
             _cargar_config_previa(config)
-        elif opcion == "6":
-            _seleccionar_fases(config)
         elif opcion == "7":
             return config
         elif opcion == "8":
             return None
+        elif opcion in ('6', '10'):
+            entorno = 'editor' if opcion == '6' else 'web'
+            opciones = ACCIONES_EDITOR if entorno == 'editor' else ACCIONES_WEB
+            acciones = getattr(config, 'acciones_' + entorno)
+            for clave, titulo in opciones.items():
+                acciones[clave] = _preguntar(f"  {titulo} (s/n): ", {'s', 'n'},
+                                             's' if acciones[clave] else 'n') == 's'
         elif opcion == "9":
             config.modo = _preguntar("  Interacción (ambos/editor/web): ", set(MODOS_INTERACCION))
 
@@ -211,6 +270,8 @@ def _config_a_dict(config: Configuracion) -> dict:
         "tiempo": config.tiempo,
         "fases": config.fases,
         "modo": config.modo,
+        "acciones_editor": dict(config.acciones_editor),
+        "acciones_web": dict(config.acciones_web),
         "fecha": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
     }
 
@@ -219,7 +280,7 @@ def _dict_a_config(d: dict, comprobar_cancelacion=None) -> Configuracion:
     """Reconstruye una configuración a partir de un registro del historial."""
     if not _registro_valido(d):
         raise ValueError("Configuración del historial inválida")
-    if d.get("modo", "ambos") != "web" and d.get("fuente_tipo") == "directorio" and d.get("directorio"):
+    if d.get("modo", "ambos") != "web" and acciones_config(d, "editor")["escribir"] and d.get("fuente_tipo") == "directorio" and d.get("directorio"):
         try:
             fuente = RealProjectSource(d["directorio"], comprobar_cancelacion=comprobar_cancelacion)
             descripcion = str(fuente)
@@ -232,6 +293,9 @@ def _dict_a_config(d: dict, comprobar_cancelacion=None) -> Configuracion:
         descripcion = d.get("fuente_descripcion", "Código React/TS aleatorio")
 
     return Configuracion(
+        editor=d.get("editor", "vsCode"),
+        acciones_editor=acciones_config(d, "editor"),
+        acciones_web=acciones_config(d, "web"),
         browser=d.get("browser"),
         paginas=[p for p in (d.get("paginas") or []) if isinstance(p, str)],
         nombres_web=dict(d.get("nombres_web", {})),
@@ -240,7 +304,7 @@ def _dict_a_config(d: dict, comprobar_cancelacion=None) -> Configuracion:
         tiempo=d.get("tiempo"),
         fases=d.get("fases", "ambas"),
         modo=d.get("modo", "ambos"),
-        directorio=d.get("directorio") if d.get("modo") == "web" and d.get("fuente_tipo") == "directorio" else None,
+        directorio=d.get("directorio") if d.get("fuente_tipo") == "directorio" and (d.get("modo") == "web" or not acciones_config(d, "editor")["escribir"]) else None,
     )
 
 
@@ -252,12 +316,23 @@ def _registro_valido(registro) -> bool:
     tiempo = registro.get('tiempo')
     fases = registro.get('fases', 'ambas')
     return (
-        (browser is None or isinstance(browser, str) and browser in NAVEGADORES_VALIDOS)
+        all(clave in {'editor', 'browser', 'paginas', 'nombres_web', 'fuente_tipo',
+                      'fuente_descripcion', 'directorio', 'tiempo', 'fases', 'modo', 'fecha',
+                      'acciones_editor', 'acciones_web'} for clave in registro)
+        and all(clave not in registro or isinstance(registro[clave], dict)
+                and all(accion in opciones and type(valor) is bool for accion, valor in registro[clave].items())
+                for clave, opciones in (('acciones_editor', ACCIONES_EDITOR), ('acciones_web', ACCIONES_WEB)))
+        and isinstance(registro.get('editor', 'vsCode'), str) and registro.get('editor', 'vsCode') in EDITORES
+        and isinstance(registro.get('fecha', ''), str)
+        and (browser is None or isinstance(browser, str) and browser in NAVEGADORES_VALIDOS)
         and isinstance(registro.get("nombres_web", {}), dict)
         and all(isinstance(url, str) and isinstance(nombre, str) and bool(nombre.strip())
                 for url, nombre in registro.get("nombres_web", {}).items())
         and isinstance(paginas, list) and all(isinstance(p, str) for p in paginas)
         and tiempo_valido(tiempo)
+        and registro.get('fuente_tipo', 'aleatorio') in ('aleatorio', 'directorio')
+        and (registro.get('fuente_tipo') != 'directorio'
+             or isinstance(registro.get('directorio'), str) and bool(registro['directorio'].strip()))
         and isinstance(registro.get("modo", "ambos"), str) and registro.get("modo", "ambos") in MODOS_INTERACCION
         and isinstance(fases, str) and fases in FASES_EDITOR
         and isinstance(registro.get('fuente_descripcion', ''), str)
@@ -270,7 +345,7 @@ def cargar_historial() -> list:
     try:
         if not RUTA_HISTORIAL.exists():
             return []
-        datos = json.loads(RUTA_HISTORIAL.read_text(encoding="utf-8"))
+        datos = leer_json(RUTA_HISTORIAL)
         if not isinstance(datos, list):
             return []
         validos = [registro for registro in datos if _registro_valido(registro)]
@@ -287,11 +362,14 @@ def guardar_historial(registros: list) -> None:
     """Guarda los registros de configuración en el archivo de historial."""
     temporal = None
     try:
+        contenido = json.dumps(registros, ensure_ascii=False, indent=2)
+        if len(contenido.encode('utf-8')) > MAX_JSON_BYTES:
+            raise ValueError('El historial supera 2 MiB')
         RUTA_HISTORIAL.parent.mkdir(parents=True, exist_ok=True)
         with tempfile.NamedTemporaryFile(mode='w', encoding='utf-8',
                                          dir=RUTA_HISTORIAL.parent, delete=False) as archivo:
             temporal = Path(archivo.name)
-            json.dump(registros, archivo, ensure_ascii=False, indent=2)
+            archivo.write(contenido)
             archivo.flush()
             os.fsync(archivo.fileno())
         os.replace(temporal, RUTA_HISTORIAL)
@@ -307,7 +385,7 @@ def guardar_configuracion(config: Configuracion) -> None:
     registros = cargar_historial()
     nuevo = _config_a_dict(config)
 
-    clave = {k: nuevo.get(k) for k in ("editor", "browser", "paginas", "fuente_tipo", "directorio", "tiempo", "fases", "modo", "nombres_web")}
+    clave = {k: nuevo.get(k) for k in ("editor", "browser", "paginas", "fuente_tipo", "directorio", "tiempo", "fases", "modo", "nombres_web", "acciones_editor", "acciones_web")}
     if registros:
         clave_ultimo = {k: registros[0].get(k) for k in clave}
         if clave_ultimo == clave:
@@ -332,9 +410,8 @@ def _cargar_config_previa(config: Configuracion) -> bool:
         webs = ", ".join(r.get("paginas") or []) or "ninguna"
         fuente = r.get("fuente_descripcion", "?")
         tiempo = formatear_tiempo(r.get("tiempo"))
-        fases = FASES_EDITOR.get(r.get("fases"), FASES_EDITOR["ambas"])
         modo = MODOS_INTERACCION[r.get('modo', 'ambos')]
-        print(f"    [{i}] {modo} | {editor} | {browser} | {webs} | {fuente} | {fases} | {tiempo} | {r.get('fecha', '')}")
+        print(f"    [{i}] {modo} | {editor} | {browser} | {webs} | {fuente} | {tiempo} | {r.get('fecha', '')}")
 
     print("  (Enter = la más reciente)")
     opcion = _preguntar(
@@ -345,6 +422,7 @@ def _cargar_config_previa(config: Configuracion) -> bool:
     d = registros[int(opcion) - 1]
     previa = _dict_a_config(d)
 
+    config.editor = previa.editor
     config.browser = previa.browser
     config.paginas = previa.paginas
     config.nombres_web = previa.nombres_web
@@ -352,6 +430,8 @@ def _cargar_config_previa(config: Configuracion) -> bool:
     config.fuente_descripcion = previa.fuente_descripcion
     config.tiempo = previa.tiempo
     config.fases = previa.fases
+    config.acciones_editor = previa.acciones_editor
+    config.acciones_web = previa.acciones_web
     config.modo = previa.modo
     config.directorio = previa.directorio
     print("  Configuración previa cargada")
@@ -362,6 +442,7 @@ def configuracion_desde_args(args) -> Configuracion:
     """Construye la configuración a partir de argumentos CLI (modo avanzado)."""
     paginas = [u.strip() for u in args.web.split(",") if u.strip()] if args.web else []
     return Configuracion(
+        editor=getattr(args, "editor", None) or "vsCode",
         browser=args.browser,
         paginas=paginas,
         fuente=CodeGenerator(),

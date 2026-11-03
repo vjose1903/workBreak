@@ -8,7 +8,8 @@ from Foundation import NSObject
 
 from app_preferences import estado_inicio, establecer_inicio, inicio_disponible
 from app_version import VERSION
-from menu import MODOS_INTERACCION, FASES_EDITOR, NAVEGADORES_VALIDOS, formatear_tiempo
+from editor_catalog import editores_instalados
+from menu import MODOS_INTERACCION, NAVEGADORES_VALIDOS, formatear_tiempo, ACCIONES_EDITOR, ACCIONES_WEB, acciones_config
 
 
 class VentanaConfiguracion(NSObject):
@@ -46,25 +47,48 @@ class VentanaConfiguracion(NSObject):
 
         self.etiqueta(actividad, 'Cómo quieres trabajar', 20, 235, 600, 25, 16, True)
         self.modo = self.selector(actividad, 'Interacción', 190, 'modo', MODOS_INTERACCION)
-        self.fases = self.selector(actividad, 'Fases del editor', 140, 'fases', FASES_EDITOR)
-        self.tiempo = self.boton(actividad, 'Tiempo de ejecución…', 20, 84, 300, 'tiempo')
-        self.recientes = NSPopUpButton.alloc().initWithFrame_pullsDown_(((20, 28), (620, 30)), False)
+        self.tiempo = self.boton(actividad, 'Tiempo de ejecución…', 20, 132, 300, 'tiempo')
+        self.recientes = NSPopUpButton.alloc().initWithFrame_pullsDown_(((20, 72), (620, 30)), False)
         self.recientes.setTarget_(self)
         self.recientes.setAction_('cargarReciente:')
         actividad.addSubview_(self.recientes)
 
-        self.etiqueta(editor, 'Código y editor', 20, 235, 600, 25, 16, True)
-        self.etiqueta(editor, 'Editor: Visual Studio Code', 20, 195, 600, 25, 14)
+        self.etiqueta(editor, 'Código y editor', 20, 235, 380, 25, 16, True)
+        self.editor = self.selector(editor, 'Editor', 190, 'editor',
+                                    editores_instalados() or {None: 'Ninguno compatible instalado'},
+                                    x=170, ancho=220, ancho_etiqueta=145)
         self.fuente = self.selector(editor, 'Fuente de código', 140, 'fuente_tipo',
-                                    {'aleatorio': 'React / TypeScript aleatorio', 'directorio': 'Directorio de un proyecto'})
+                                    {'aleatorio': 'React / TypeScript aleatorio', 'directorio': 'Directorio de un proyecto'},
+                                    x=170, ancho=220, ancho_etiqueta=145)
         self.directorio = self.boton(editor, 'Elegir directorio…', 20, 87, 250, 'fuente:directorio')
-        self.ruta = self.etiqueta(editor, '', 20, 20, 620, 60)
+        self.ruta = self.etiqueta(editor, '', 20, 20, 380, 60)
 
-        self.etiqueta(navegador, 'Navegación web', 20, 235, 600, 25, 16, True)
+        self.etiqueta(navegador, 'Navegación web', 20, 235, 380, 25, 16, True)
         self.browser = self.selector(navegador, 'Navegador', 185, 'browser',
-                                     {None: 'Ninguno', **{clave: clave.capitalize() for clave in NAVEGADORES_VALIDOS}})
+                                     {None: 'Ninguno', **{clave: clave.capitalize() for clave in NAVEGADORES_VALIDOS}},
+                                     x=170, ancho=220, ancho_etiqueta=145)
         self.webs = self.boton(navegador, 'Administrar webs…', 20, 125, 300, 'webs')
-        self.web_info = self.etiqueta(navegador, '', 20, 50, 620, 60)
+        self.web_info = self.etiqueta(navegador, '', 20, 50, 380, 60)
+        self.controles_acciones = {}
+        for entorno, titulo, opciones, vista in (
+                ('editor', 'En el editor', ACCIONES_EDITOR, editor),
+                ('web', 'En el navegador', ACCIONES_WEB, navegador)):
+            self.etiqueta(vista, 'Acciones', 430, 235, 210, 25, 16, True)
+            for indice, (clave, etiqueta) in enumerate(opciones.items()):
+                control = NSButton.alloc().initWithFrame_(((430, 190 - indice * 34), (210, 28)))
+                control.setButtonType_(3)
+                control.setTitle_(etiqueta)
+                control.setAccessibilityLabel_(titulo + ': ' + etiqueta)
+                control.setIdentifier_(f'accion:{entorno}:{clave}')
+                control.setTarget_(self)
+                control.setAction_('accion:')
+                if clave == 'mover_mouse':
+                    control.setToolTip_('Si está desactivado, el click y el scroll requieren el cursor dentro del área segura.')
+                vista.addSubview_(control)
+                self.controles_acciones[(entorno, clave)] = control
+        self.etiqueta(editor, 'Sin «Escribir» no se carga ni reescribe código.', 430, 12, 210, 60)
+        self.etiqueta(navegador, 'Sin «Mover mouse», el click y el scroll requieren el cursor dentro del área segura.',
+                      430, 12, 210, 80)
         self.etiqueta(raiz, 'Cambios guardados automáticamente.', 28, 27, 490, 25)
         cerrar = self.boton(raiz, 'Cerrar', 595, 24, 125, 'cerrar')
         cerrar.setKeyEquivalent_('\r')
@@ -102,9 +126,9 @@ class VentanaConfiguracion(NSObject):
         return boton
 
     @objc.python_method
-    def selector(self, vista, titulo, y, clave, opciones):
-        self.etiqueta(vista, titulo, 20, y + 3, 220, 24, 14)
-        selector = NSPopUpButton.alloc().initWithFrame_pullsDown_(((245, y), (395, 30)), False)
+    def selector(self, vista, titulo, y, clave, opciones, x=245, ancho=395, ancho_etiqueta=220):
+        self.etiqueta(vista, titulo, 20, y + 3, ancho_etiqueta, 24, 14)
+        selector = NSPopUpButton.alloc().initWithFrame_pullsDown_(((x, y), (ancho, 30)), False)
         selector.addItemsWithTitles_(list(opciones.values()))
         selector.setIdentifier_(clave)
         selector.setAccessibilityLabel_(titulo)
@@ -116,7 +140,7 @@ class VentanaConfiguracion(NSObject):
 
     @objc.python_method
     def refrescar(self):
-        for clave, control in [('modo', self.modo), ('fases', self.fases),
+        for clave, control in [('modo', self.modo), ('editor', self.editor),
                                ('browser', self.browser), ('fuente_tipo', self.fuente)]:
             valores = self.opciones[clave]
             valor = self.config.get(clave)
@@ -125,13 +149,20 @@ class VentanaConfiguracion(NSObject):
         self.recientes.addItemWithTitle_('Cargar una configuración reciente…')
         for registro in self.menu.historial:
             self.recientes.addItemWithTitle_(f"{MODOS_INTERACCION[registro.get('modo', 'ambos')]} · {formatear_tiempo(registro.get('tiempo'))}")
-        self.recientes.setEnabled_(bool(self.menu.historial))
+        bloqueada = bool(self.menu.controlador.activo or self.menu.actualizador.consultando or self.menu.saliendo)
+        self.recientes.setEnabled_(bool(self.menu.historial) and not bloqueada)
+        self.modo.setEnabled_(not bloqueada)
+        self.tiempo.setEnabled_(not bloqueada)
         solo_web = self.config.get('modo') == 'web'
         solo_editor = self.config.get('modo') == 'editor'
-        for control in (self.fases, self.fuente, self.directorio):
-            control.setEnabled_(not solo_web)
-        self.browser.setEnabled_(not solo_editor)
-        self.webs.setEnabled_(not solo_editor)
+        for control in (self.fuente, self.directorio):
+            control.setEnabled_(not solo_web and not bloqueada)
+        self.editor.setEnabled_(not solo_web and not bloqueada and self.opciones['editor'] != [None])
+        self.browser.setEnabled_(not solo_editor and not bloqueada)
+        self.webs.setEnabled_(not solo_editor and not bloqueada)
+        for (entorno, clave), control in self.controles_acciones.items():
+            control.setState_(int(acciones_config(self.config, entorno)[clave]))
+            control.setEnabled_(not bloqueada and not (solo_web if entorno == 'editor' else solo_editor))
         self.tiempo.setTitle_('Tiempo: ' + formatear_tiempo(self.config.get('tiempo')) + '…')
         self.ruta.setStringValue_('Configurado solo navegador.' if solo_web else
                                  self.config.get('directorio') or 'Se generará código React / TypeScript aleatorio.')
@@ -163,7 +194,7 @@ class VentanaConfiguracion(NSObject):
             if clave == 'fuente_tipo':
                 self.menu.configurar('fuente:' + valor)
             else:
-                prefijo = {'modo': 'modo', 'fases': 'fase', 'browser': 'browser'}[clave]
+                prefijo = {'modo': 'modo', 'browser': 'browser', 'editor': 'editor'}[clave]
                 self.menu.configurar(prefijo + ':' + (valor or ''))
         except Exception as error:
             self.menu.aviso('Configuración', str(error))

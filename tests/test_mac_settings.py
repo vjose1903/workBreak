@@ -31,6 +31,44 @@ class ConfiguracionMacTest(unittest.TestCase):
         self.menu.ventana_configuracion = self.ventana
         self.addCleanup(self.ventana.ventana.close)
 
+    def test_selector_editor_muestra_solo_instalados_y_guarda_eleccion(self):
+        opciones = {'vsCode': 'Visual Studio Code', 'cursor': 'Cursor'}
+        with patch('mac_settings.editores_instalados', return_value=opciones), \
+                patch('mac_menu.editores_instalados', return_value=opciones):
+            self.ventana.ventana.close()
+            self.ventana.preparar(self.menu)
+            self.assertEqual(self.ventana.editor.titleOfSelectedItem(), 'Visual Studio Code')
+            self.ventana.editor.selectItemAtIndex_(1)
+            self.ventana.seleccionar_(self.ventana.editor)
+        self.assertEqual(cargar_preferencias()['editor'], 'cursor')
+        self.assertEqual(self.menu.config['editor'], 'cursor')
+
+    def test_acciones_se_comparten_entre_menu_ventana_y_preferencias(self):
+        vistas = {item.identifier(): item.view() for item in self.ventana.tabs.tabViewItems()}
+        for (entorno, _), control in self.ventana.controles_acciones.items():
+            self.assertEqual(control.superview(), vistas['Editor' if entorno == 'editor' else 'Navegador'])
+        control = self.ventana.controles_acciones[('editor', 'escribir')]
+        self.ventana.accion_(control)
+        self.assertFalse(self.menu.config['acciones_editor']['escribir'])
+        self.assertEqual(control.state(), 0)
+        self.assertFalse(cargar_preferencias()['acciones_editor']['escribir'])
+        self.menu.configurar('accion:web:click')
+        self.assertEqual(self.ventana.controles_acciones[('web', 'click')].state(), 0)
+        self.assertFalse(cargar_preferencias()['acciones_web']['click'])
+        self.menu.controlador.activo = True
+        self.ventana.refrescar()
+        self.assertTrue(all(not c.isEnabled() for c in self.ventana.controles_acciones.values()))
+
+    def test_descarga_bloquea_controles_y_luego_los_rehabilita(self):
+        self.menu.actualizador.consultando = True
+        self.ventana.refrescar()
+        for control in (self.ventana.modo, self.ventana.tiempo, self.ventana.editor,
+                        self.ventana.fuente, self.ventana.directorio, self.ventana.browser, self.ventana.webs):
+            self.assertFalse(control.isEnabled())
+        self.menu.actualizador.consultando = False
+        self.ventana.refrescar()
+        self.assertTrue(self.ventana.modo.isEnabled())
+
     def test_ventana_comparte_datos_y_persiste_al_cambiar(self):
         self.assertEqual([item.label() for item in self.ventana.tabs.tabViewItems()], ['General', 'Actividad', 'Editor', 'Navegador'])
         self.assertIs(self.ventana.config, self.menu.config)
@@ -39,7 +77,6 @@ class ConfiguracionMacTest(unittest.TestCase):
         self.assertEqual(self.menu.config['modo'], 'web')
         self.assertEqual(cargar_preferencias()['modo'], 'web')
         self.assertFalse(self.ventana.fuente.isEnabled())
-        self.assertFalse(self.ventana.fases.isEnabled())
         self.assertTrue(self.ventana.browser.isEnabled())
         self.menu.construir_menu.assert_called_once()
 
@@ -51,9 +88,9 @@ class ConfiguracionMacTest(unittest.TestCase):
         self.assertFalse(self.ventana.browser.isEnabled())
         self.assertFalse(self.ventana.webs.isEnabled())
         self.assertIn('solo editor', self.ventana.web_info.stringValue())
-        self.menu.configurar('fase:mouse')
-        self.assertEqual(self.ventana.fases.indexOfSelectedItem(), 2)
-        self.assertEqual(cargar_preferencias()['fases'], 'mouse')
+        self.menu.configurar('accion:editor:escribir')
+        self.assertEqual(self.ventana.controles_acciones[('editor', 'escribir')].state(), 0)
+        self.assertFalse(cargar_preferencias()['acciones_editor']['escribir'])
 
     def test_cerrar_conserva_cambios_compartidos(self):
         self.menu.configurar('modo:editor')

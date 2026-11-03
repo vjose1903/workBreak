@@ -23,7 +23,7 @@
   <a href="#-desarrollo-y-publicación">Desarrollo</a>
 </p>
 
-WorkBreak simula escritura en **Visual Studio Code** y movimientos, clics y scroll en un navegador. Puedes utilizar solo el editor, solo la web o alternar ambos, elegir las fases y definir una duración. Se controla desde su **W en la barra de menús**, sin mantener una terminal abierta cuando utilizas la aplicación instalada.
+WorkBreak simula escritura en **Visual Studio Code** y movimientos y scroll en un navegador. Puedes utilizar solo el editor, solo la web o alternar ambos, elegir las acciones y definir una duración. Se controla desde su **W en la barra de menús**, sin mantener una terminal abierta cuando utilizas la aplicación instalada.
 
 ## 📥 Descargas
 
@@ -56,7 +56,7 @@ Los botones utilizan `/releases/latest/download/` y apuntan automáticamente a l
 4. **Configura** la interacción, navegador, webs, fuente de código y tiempo.
 5. Pulsa **Iniciar bot**. Para finalizar, abre la W y selecciona **Detener bot**.
 
-El bot comienza únicamente cuando pulsas **Iniciar bot**. En los modos que usan el editor necesitas tener **Visual Studio Code instalado**; para la interacción web, el navegador elegido debe estar instalado.
+El bot comienza únicamente cuando pulsas **Iniciar bot**. En los modos que usan el editor necesitas tener **un editor compatible instalado**; para la interacción web, el navegador elegido debe estar instalado.
 
 ### 🔐 Permisos y primera apertura
 
@@ -87,7 +87,8 @@ Las siguientes son **capturas reales de la interfaz del proyecto**, con direccio
 | **Interacción** | Editor y navegador, solo editor o solo navegador. |
 | **Navegador y Webs…** | Navegador y direcciones identificadas por nombre. |
 | **Fuente de código** | Código aleatorio o archivos de un directorio real. |
-| **Tiempo… y Fases del editor** | Duración y fases de escritura o mouse. |
+| **Tiempo…** | Duración de la ejecución. |
+| **Editor → Acciones / Navegador → Acciones** | Activa cada acción de forma independiente. |
 | **Configuraciones recientes** | Recuperar una de las últimas configuraciones utilizadas. |
 | **Configuración…** | Abre la ventana con todas las opciones organizadas por pestañas. |
 | **Estado y estadísticas…** | Consultar el estado y los tiempos registrados. |
@@ -105,12 +106,12 @@ Durante la ejecución se bloquean las opciones de configuración. Puedes consult
 | Pestaña | Opciones |
 | --- | --- |
 | **General** | Abrir WorkBreak al iniciar sesión y consultar la versión instalada. |
-| **Actividad** | Interacción (editor, navegador o ambos), fases, tiempo y configuraciones recientes. |
+| **Actividad** | Interacción (editor, navegador o ambos), tiempo y configuraciones recientes. |
 | **Editor** | Fuente de código aleatorio o directorio de un proyecto. |
 | **Navegador** | Navegador y administración de webs con nombre y dirección. |
 
 <p align="center">
-  <img src="docs/images/configuracion-actividad.png" alt="Pestaña Actividad con modo de interacción, fases, duración y configuraciones recientes" width="740" />
+  <img src="docs/images/configuracion-actividad.png" alt="Pestaña Actividad con modo de interacción, duración y configuraciones recientes" width="740" />
 </p>
 
 El menú de la barra y la ventana utilizan **la misma configuración**. Los cambios se guardan automáticamente, aunque no inicies el bot: al cambiar un valor en el menú se actualiza la ventana abierta, y al cambiarlo en una pestaña se actualizan los valores y las marcas del menú. **Cerrar** conserva los cambios. Si falla el guardado, se mantiene la configuración anterior en ambas vistas. No se puede iniciar la automatización mientras la ventana de configuración está abierta.
@@ -152,22 +153,31 @@ Desactiva **Tiempo indefinido** para introducir una duración en horas, minutos 
 
 Al activar **Tiempo indefinido**, los campos se restablecen a `00` y quedan deshabilitados. El bot continuará hasta que lo detengas. Si hay un límite, el tiempo sigue contando durante las pausas por actividad; la limpieza puede terminar después de ese límite.
 
-### 📝 Fuente de código y fases del editor
+### 📝 Fuente de código y acciones
 
-El editor es siempre **Visual Studio Code**. WorkBreak abre un archivo temporal vacío; después coloca el código completo de la fuente seleccionada. Los archivos originales del directorio no se editan.
+En **Configuración → Editor** o en el submenú **Editor** de la barra puedes elegir entre los editores compatibles instalados: **Visual Studio Code, Cursor, Windsurf y VS Code Insiders**. VS Code se selecciona por defecto si está instalado; se conserva tu elección guardada mientras siga disponible. WorkBreak abre un archivo temporal vacío; si activas **Escribir**, después coloca el código completo de la fuente seleccionada. Los archivos originales del directorio no se editan.
 
 - **Código aleatorio:** genera contenido React/TypeScript.
 - **Directorio real:** busca archivos `.tsx`, `.jsx`, `.ts` y `.js` de **20 a 400 líneas**, excluyendo carpetas como `node_modules`, `dist` y `build`. La ruta elegida aparece en la pestaña Editor. Cada tres fases de escritura intenta cargar otro archivo, evitando repetir el anterior cuando hay alternativas válidas.
 
-| Fase | Comportamiento |
-| --- | --- |
-| **Escritura y mouse** | Alterna la reescritura de fragmentos con movimientos y scroll. |
-| **Solo escritura** | Conserva el archivo completo y reescribe fragmentos línea por línea. |
-| **Solo mouse** | Carga el código completo y realiza movimientos y scroll sin reescribirlo. |
+En **Configuración → Editor / Navegador** o en los submenús **Editor → Acciones** y **Navegador → Acciones** puedes activar cada acción por separado:
 
-La reescritura verifica el contenido antes de reemplazar una línea y conserva sus saltos y sangría. Si una fase termina con una línea incompleta, guarda el progreso para continuar después. Solo selecciona líneas no vacías con caracteres ASCII imprimibles para la reescritura.
+- Editor: **Escribir**, **Click**, **Scroll** y **Mover mouse**.
+- Navegador: **Click**, **Scroll** y **Mover mouse**.
 
-En macOS utiliza **Option+G** para ir a la línea; los atajos se envían con modificadores explícitos y sin `Fn`. Si no puede confirmar el archivo temporal o el contenido esperado, detiene la edición para evitar sobrescribir cambios externos.
+Las ventanas siguen automáticamente el modo claro u oscuro de macOS, también al cambiarlo mientras están abiertas.
+
+Los cambios se guardan automáticamente y forman parte de las configuraciones recientes. Las configuraciones antiguas se convierten a las acciones equivalentes a sus fases y el navegador mantiene las tres acciones activas por defecto.
+
+Desactivar **Escribir** también evita pegar el código inicial. Desactivar **Mover mouse** impide que el bot recoloque el cursor: los clics y el scroll solo se ejecutan si ya está dentro del área segura de la ventana. La apertura, el enfoque y la navegación siguen usando los controles necesarios de cada aplicación. Si desactivas todas las acciones de una aplicación, se omite; para iniciar debe quedar al menos una acción en una aplicación configurada.
+
+La reescritura verifica el contenido antes de reemplazar una línea y conserva sus saltos y sangría. Si una fase termina o una pausa interrumpe una línea, conserva el progreso y termina esa misma línea al volver a escribir, antes de cambiar de archivo. Solo selecciona líneas no vacías con caracteres ASCII imprimibles para la reescritura.
+
+La reescritura envía eventos de teclado por carácter; no copia y pega cada letra. El portapapeles se sigue usando para la carga inicial del archivo y las comprobaciones de seguridad. VS Code abre un espacio temporal propio con autocierre, sugerencias automáticas, formato al escribir y guardar, guardado automático y recorte de espacios desactivados, sin modificar los ajustes globales ni el proyecto fuente. Si VS Code solicita confirmar la confianza del espacio, revísalo antes de continuar.
+
+Los eventos siguen siendo **sintéticos**. WorkBreak no garantiza que Time Doctor u otro monitor los clasifique como actividad humana, ni que no genere alertas.
+
+En macOS utiliza la opción oficial **`code --goto archivo:línea:columna`** para navegar al archivo temporal, sin escribir coordenadas en el documento ni depender de atajos personalizados. Los atajos restantes se envían con modificadores explícitos y sin `Fn`. Si no puede confirmar el archivo temporal o el contenido esperado, detiene la edición para evitar sobrescribir cambios externos.
 
 ### 🖱️ Varios monitores
 
@@ -175,7 +185,7 @@ Puedes colocar el editor y el navegador en **monitores diferentes**. La fase de 
 
 Se contemplan coordenadas negativas, pantallas Retina y monitores situados a la izquierda o encima del principal. Si una ventana ocupa varias pantallas, se utiliza la mayor área continua de interacción en una de ellas. La posición se vuelve a consultar durante la fase de mouse.
 
-La detección nativa reconoció cuatro monitores en el entorno de desarrollo. El flujo completo de clics y scroll en ventanas situadas en pantallas secundarias todavía requiere comprobación funcional.
+La detección nativa reconoció cuatro monitores en el entorno de desarrollo. El flujo completo de movimientos y scroll en ventanas situadas en pantallas secundarias todavía requiere comprobación funcional.
 
 ## ⏸️ Pausas y detención
 
@@ -189,7 +199,7 @@ La detección nativa reconoció cuatro monitores en el entorno de desarrollo. El
 
 El portapapeles se guarda y se restaura respetando cambios externos. Las estadísticas excluyen las esperas de reanudación. Solo se permite una sesión de automatización y una interfaz por usuario, incluso entre copias de la aplicación.
 
-Las pestañas del navegador pueden permanecer abiertas al terminar o después de una pausa. El bot evita cerrar una pestaña cuya identidad no puede confirmar; también comprueba la ventana y la dirección antes de interactuar. Si un clic navega a otra dirección, finaliza esa visita sin detener todo el bot. En la fase de mouse del editor se confirma el foco antes de cada acción.
+Las pestañas del navegador pueden permanecer abiertas al terminar o después de una pausa. El bot evita cerrar una pestaña cuya identidad no puede confirmar; también comprueba la ventana y la dirección antes de interactuar. Si la página cambia de dirección, finaliza esa visita sin detener todo el bot. Los clics del navegador se pueden desactivar desde las opciones de acciones para evitar activar enlaces, formularios o botones de las webs configuradas. En la fase de mouse del editor se confirma el foco antes de cada acción.
 
 ## 🔄 Actualizaciones
 
@@ -209,7 +219,7 @@ Las pestañas del navegador pueden permanecer abiertas al terminar o después de
 
 Las capturas muestran los diálogos reales con la versión **1.0.2 como ejemplo**; no anuncian una nueva Release publicada.
 
-La descarga verifica HTTPS, el tamaño y el SHA-256 publicado por GitHub. Antes de instalar se comprueban el identificador, la versión y el destino del paquete. Si la descarga está incompleta o no coincide, no se instala. Durante la descarga no se puede iniciar el bot; salir cancela la operación, incluidos los auxiliares de verificación. La limpieza se realiza en segundo plano; un volumen ocupado no bloquea el cierre y su ruta queda en el registro.
+La descarga verifica HTTPS, el tamaño y el SHA-256 publicado por GitHub. Antes de instalar se comprueban el identificador, la versión y el destino del paquete. Si la descarga está incompleta o no coincide, no se instala. La descarga tiene un límite total de 15 minutos. Durante la descarga no se puede iniciar el bot; salir cancela la operación, incluidos los auxiliares de verificación. La limpieza se realiza en segundo plano y el cierre espera a que termine el intento acotado de desmontaje; un volumen ocupado no bloquea el cierre y su ruta queda en el registro.
 
 La instalación automática requiere ejecutar la copia instalada en **Aplicaciones**. Un proceso auxiliar espera a que WorkBreak termine antes de pedir autorización de administrador y ejecutar el instalador nativo. Si cancelas la autorización o falla la instalación, muestra un aviso e intenta volver a abrir la aplicación existente. El registro del proceso se guarda en `~/Library/Logs/WorkBreak/update.log`. La configuración se conserva.
 
@@ -265,7 +275,7 @@ python src/main.py --modo web -browser chrome -web "https://example.com" -tiempo
 | `-browser` | `chrome`, `edge`, `opera` o `firefox`. |
 | `-web` | Direcciones separadas por comas. |
 | `-tiempo` | Minutos positivos o `indefinido`; sin valor configurado, la ejecución es indefinida. |
-| `-editor vsCode` | Compatibilidad con comandos antiguos; no permite otros editores. |
+| `-editor vsCode` | Editor a utilizar: `vsCode`, `cursor`, `windsurf` o `vsCodeInsiders`. |
 
 ### Compilar el DMG
 
@@ -283,7 +293,7 @@ El build verifica la firma estructural y ejecuta una comprobación del binario: 
 
 ### 🏷️ Crear una versión y publicarla
 
-Necesitas **Node.js 18 o posterior**, Git y **GitHub CLI (`gh`) instalado y autenticado**, con acceso al repositorio y GitHub Actions. El script comprueba ese acceso antes de crear commits o tags. Desde la raíz:
+Necesitas **Node.js 18 o posterior** y **Git**, con permisos para enviar cambios al repositorio. El script no requiere GitHub CLI. Desde la raíz:
 
 ```bash
 node scripts/release.js
@@ -293,11 +303,9 @@ Elige **mayor**, **versión** o **parche** y describe los cambios. Para publicar
 
 El script muestra la rama, versión, tag y archivos pendientes antes de pedir confirmación. **Incluye todos los cambios no ignorados del proyecto**, crea el commit y el tag anotado y envía rama y tag juntos mediante un push atómico. No reemplaza tags ni hace push forzado.
 
-Después se encarga de la publicación completa: espera el workflow del tag y, si el push no lo activó, lo inicia automáticamente. Muestra el progreso de GitHub Actions y espera a que finalicen las compilaciones y la publicación. Solo anuncia la versión como disponible después de comprobar una Release estable con los DMG de ambas arquitecturas, incluidos los archivos con nombres fijos para las descargas dinámicas. Al terminar imprime los enlaces. **No necesitas lanzar Actions ni ejecutar otro comando manualmente.**
+**El comando termina en cuanto sube el commit y el tag. Puedes cerrar la terminal.** GitHub Actions compila y publica los DMG en segundo plano; la descarga de esa versión estará disponible cuando el workflow termine correctamente. Puedes consultar el progreso en [Actions](https://github.com/vjose1903/workBreak/actions).
 
-Si falla la compilación, el comando termina con error y muestra la ejecución que falló; no anuncia instaladores inexistentes ni borra el tag publicado. Mantén abierta la terminal hasta que termine el seguimiento.
-
-Para reanudar una publicación interrumpida, ejecuta nuevamente `node scripts/release.js` y elige **Actual**. El checkout debe estar limpio, `VERSION` debe coincidir con el tag y este debe apuntar al commit actual. El script vuelve a enviar el mismo tag si faltó el push y reintenta una ejecución fallida de Actions. Nunca mueve tags ni incluye cambios pendientes en una versión ya creada.
+Para reintentar un push interrumpido, ejecuta nuevamente `node scripts/release.js` y elige **Actual**. El checkout debe estar limpio, `VERSION` debe coincidir con el tag y este debe apuntar al commit actual. El script vuelve a enviar el mismo tag sin modificarlo. Esto no reinicia una ejecución de Actions que ya haya fallado; puedes reejecutarla desde GitHub Actions.
 
 Para simularlo sin modificar archivos, staging, commits ni tags:
 
@@ -349,3 +357,5 @@ Para investigar un problema, comparte la versión, arquitectura, modo de interac
 Los archivos fuente deben ser archivos regulares de hasta **2 MiB**, con entre **20 y 400 líneas**. Se omiten tuberías y archivos demasiado grandes; el escaneo admite cancelación. Las direcciones individuales conservan comas válidas en sus parámetros, por ejemplo `https://example.com/?ids=1,2`.
 
 Las duraciones guardadas se validan antes de cargarse: de un segundo hasta **9999:59:59**, o tiempo indefinido. Se descartan configuraciones inválidas sin impedir el arranque.
+
+Las preferencias y el historial se leen con un límite de **2 MiB**. Los archivos no regulares o con anidamiento JSON excesivo se descartan sin bloquear el arranque. El proceso antirreposo queda ligado al PID del bot para terminar también si este sale inesperadamente.

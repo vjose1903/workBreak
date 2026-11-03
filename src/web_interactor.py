@@ -7,6 +7,7 @@ from typing import Optional
 from base_automation import BaseAutomation, FailsafeActivo
 from statistics_tracker import StatisticsTracker
 from user_activity import PausaPorActividad
+from menu import normalizar_web, acciones_config
 
 
 class NavegacionCambiada(RuntimeError):
@@ -20,6 +21,7 @@ class WebInteractor(BaseAutomation):
         self.stats_tracker = stats_tracker
         self.VALID_BROWSERS = ["chrome", "edge", "opera", "firefox"]
         self.paginas = []
+        self.acciones = acciones_config({}, "web")
         self.browser = None
         self.browser_abierto = False
         self._indice_pagina = 0
@@ -49,7 +51,13 @@ class WebInteractor(BaseAutomation):
 
     def set_paginas(self, paginas: list) -> None:
         """Establece las páginas a las que navegar (descartando entradas vacías)"""
-        self.paginas = [p.strip() for p in paginas if p and p.strip()]
+        normalizadas = list(dict.fromkeys(normalizar_web(p) for p in paginas if p and p.strip()))
+        if normalizadas != self.paginas:
+            self._indice_pagina = 0
+            self._contexto = None
+            self._turno_restante = None
+            self._visita_restante = None
+        self.paginas = normalizadas
 
     def activar_navegador(self) -> bool:
         """Activa el navegador de forma NO destructiva.
@@ -202,6 +210,8 @@ class WebInteractor(BaseAutomation):
 
     def interactuar_con_pagina(self, pagina, tiempo_turno=float("inf")):
         """Interactúa con una página abierta en el navegador"""
+        if not any(self.acciones.values()):
+            return
         duracion = self._visita_restante if self._visita_restante is not None else random.uniform(10, 20)
         self._visita_restante = None
         if duracion <= 0:
@@ -220,24 +230,28 @@ class WebInteractor(BaseAutomation):
             self._ventana_web = self.identidad_ventana_activa()
             self._url_interaccion = self._leer_url_actual()
             center_x, center_y = self._configurar_area_mouse(self.rectangulo_aplicacion(config['mac']))
-            self._move_to(center_x, center_y, duration=0.3)
-            self._click()
+            if self.acciones['mover_mouse']:
+                self._move_to(center_x, center_y, duration=0.3)
+            if self.acciones['click'] and self._mouse_en_area_segura():
+                self._click()
 
             while self._queda_tiempo(tiempo_final):
                 self._confirmar_destino_web()
                 center_x, center_y = self._configurar_area_mouse(
                     self.rectangulo_aplicacion(config['mac']))
-                # Clicks aleatorios dentro del radio
+                # Cada acción respeta su configuración independiente.
                 x_offset = random.randint(-30, 30)
                 y_offset = random.randint(-30, 30)
                 target_x = center_x + x_offset
                 target_y = center_y + y_offset
 
-                self._move_to(target_x, target_y, duration=0.5)
-                self._click()
-
-                # Scroll aleatorio
-                self._scroll(random.randint(-300, 300))
+                if self.acciones['mover_mouse']:
+                    self._move_to(target_x, target_y, duration=0.5)
+                if self._mouse_en_area_segura():
+                    if self.acciones['click']:
+                        self._click()
+                    if self.acciones['scroll']:
+                        self._scroll(random.randint(-300, 300))
                 self._esperar(random.uniform(1, 3))
 
             self._visita_restante = None
@@ -257,6 +271,12 @@ class WebInteractor(BaseAutomation):
             self._ventana_web = None
             self._url_interaccion = None
             self.registrar_tiempo_interaccion(pagina, tiempo_inicio)
+
+    def _antes_accion(self):
+        super()._antes_accion()
+        ventana = getattr(self, '_ventana_web', None)
+        if ventana is not None and self.identidad_ventana_activa() != ventana:
+            raise RuntimeError('Cambió la ventana del navegador; se cancela la interacción')
 
     def _comprobar_area_mouse(self):
         super()._comprobar_area_mouse()

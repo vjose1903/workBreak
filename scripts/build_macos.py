@@ -82,7 +82,7 @@ def main():
     plist = app / 'Contents/Info.plist'
     info = plistlib.loads(plist.read_bytes())
     info.update(CFBundleShortVersionString=VERSION, CFBundleVersion=VERSION,
-                LSUIElement=True, LSMinimumSystemVersion='15.0',
+                LSUIElement=True, LSMinimumSystemVersion='15.0', NSRequiresAquaSystemAppearance=False,
                 NSAppleEventsUsageDescription='WorkBreak necesita activar y verificar el editor y el navegador para realizar las interacciones configuradas.')
     plist.write_bytes(plistlib.dumps(info))
     identidad = os.environ.get('WORKBREAK_CODESIGN_IDENTITY', '-')

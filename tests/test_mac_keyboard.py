@@ -52,6 +52,32 @@ class MacKeyboardTest(unittest.TestCase):
             self.teclado.write('ab')
         self.assertEqual(self.quartz.CGEventPost.call_count, 2)  # Solo down/up de la primera letra.
 
+    def test_no_pulsa_si_no_puede_preparar_la_liberacion(self):
+        self.quartz.CGEventCreateKeyboardEvent.side_effect = [object(), None]
+        with self.assertRaisesRegex(RuntimeError, 'crear el evento'):
+            self.teclado.write('a')
+        self.quartz.CGEventPost.assert_not_called()
+
+    def test_un_error_al_pulsar_intenta_liberar_la_tecla(self):
+        pulsar, soltar = object(), object()
+        self.quartz.CGEventCreateKeyboardEvent.side_effect = [pulsar, soltar]
+        self.quartz.CGEventPost.side_effect = [RuntimeError('fallo del evento'), None]
+        with self.assertRaisesRegex(RuntimeError, 'fallo del evento'):
+            self.teclado.write('a')
+        self.assertIs(self.quartz.CGEventPost.call_args_list[-1].args[1], soltar)
+
+    def test_actividad_durante_pulsacion_libera_y_pausa_antes_del_siguiente_caracter(self):
+        from user_activity import MonitorActividad, PausaPorActividad
+        monitor = MonitorActividad()
+        self.teclado.antes_evento = monitor.comprobar
+        def publicar(*_):
+            monitor.registrar()
+        self.quartz.CGEventPost.side_effect = publicar
+        with self.assertRaises(PausaPorActividad):
+            self.teclado.write('ab')
+        self.assertEqual(self.quartz.CGEventPost.call_count, 2)
+        self.assertEqual([c.args[2] for c in self.quartz.CGEventCreateKeyboardEvent.call_args_list], [True, False])
+
 
 if __name__ == '__main__':
     unittest.main()

@@ -204,6 +204,13 @@ class BaseAutomation:
                     for _, _, (x, y, derecha, abajo) in win32api.EnumDisplayMonitors()]
         return [(0, 0, self.screen_width, self.screen_height)]
 
+    def _mouse_en_area_segura(self):
+        if self._area_mouse is None:
+            return False
+        x, y = self._posicion_mouse()
+        izquierda, arriba, derecha, abajo = self._area_mouse
+        return izquierda <= x <= derecha and arriba <= y <= abajo
+
     def _comprobar_area_mouse(self):
         if self._area_mouse is None:
             raise RuntimeError("No hay un área segura confirmada para el mouse")
@@ -251,7 +258,8 @@ class BaseAutomation:
 
     def identidad_ventana_activa(self):
         """Identificador nativo de la ventana superior, sin cambiar el foco."""
-        self._antes_accion()
+        # Esta lectura también se usa dentro del guardián del editor: no reentrar en él.
+        BaseAutomation._antes_accion(self)
         if self.is_windows:
             import win32gui
             return win32gui.GetForegroundWindow()
@@ -455,7 +463,7 @@ class BaseAutomation:
                     0x80000000 | 0x00000001 | 0x00000002  # ES_CONTINUOUS | ES_SYSTEM_REQUIRED | ES_DISPLAY_REQUIRED
                 )
             else:
-                self._proceso_caffeinate = subprocess.Popen(["caffeinate", "-i", "-d"])
+                self._proceso_caffeinate = subprocess.Popen(["caffeinate", "-i", "-d", "-w", str(os.getpid())])
             self._antidespierto_activo = True
             logging.info("Anti-reposo iniciado")
         except Exception as e:
@@ -472,6 +480,11 @@ class BaseAutomation:
             else:
                 if self._proceso_caffeinate is not None:
                     self._proceso_caffeinate.terminate()
+                    try:
+                        self._proceso_caffeinate.wait(timeout=1)
+                    except subprocess.TimeoutExpired:
+                        self._proceso_caffeinate.kill()
+                        self._proceso_caffeinate.wait(timeout=1)
                     self._proceso_caffeinate = None
             logging.info("Anti-reposo detenido")
         except Exception as e:

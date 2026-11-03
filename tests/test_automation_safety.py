@@ -41,6 +41,112 @@ class AutomationSafetyTest(unittest.TestCase):
         teclado.hotkey.assert_not_called()
         teclado.write.assert_not_called()
 
+    def test_antireposo_queda_vinculado_al_pid_y_recoge_el_auxiliar(self):
+        self.editor.is_windows = False
+        self.editor._antidespierto_activo = False
+        with patch('base_automation.subprocess.Popen') as lanzar:
+            self.editor.mantener_despierto_iniciar()
+            self.assertEqual(lanzar.call_args.args[0][-2:], ['-w', str(os.getpid())])
+            proceso = lanzar.return_value
+            self.editor.mantener_despierto_detener()
+        proceso.terminate.assert_called_once()
+        proceso.wait.assert_called_once_with(timeout=1)
+
+    def test_urls_web_solo_http_https_y_recorrido_se_reinicia_al_cambiar(self):
+        self.web.set_paginas(['example.com', 'http://localhost:3000'])
+        self.assertEqual(self.web.paginas, ['https://example.com', 'http://localhost:3000'])
+        self.web._indice_pagina = 1
+        self.web._contexto = {'pagina': 'anterior'}
+        self.web.set_paginas(['https://otro.example'])
+        self.assertEqual(self.web._indice_pagina, 0)
+        self.assertIsNone(self.web._contexto)
+        for url in ('file:///etc/passwd', 'javascript:alert(1)', 'https://example.com/\x00'):
+            with self.subTest(url=url), self.assertRaises(ValueError):
+                self.web.set_paginas([url])
+        self.assertEqual(self.web.paginas, ['https://otro.example'])
+
+    def test_validacion_tiempo_cli_rechaza_valores_enormes(self):
+        import argparse
+        bot = AutomationBot()
+        with self.assertRaises(argparse.ArgumentTypeError):
+            bot.validar_tiempo(str(10 ** 400))
+
+    def test_interaccion_web_no_pulsa_si_click_esta_desactivado(self):
+        self.web.acciones['click'] = False
+        with patch.object(self.web, '_queda_tiempo', side_effect=[True, False]), \
+                patch.object(self.web, '_configurar_area_mouse', return_value=(300, 300)), \
+                patch.object(self.web, '_leer_url_actual', return_value='https://example.com'), \
+                patch.object(self.web, '_move_to'), patch.object(self.web, '_click') as pulsar:
+            self.web.interactuar_con_pagina('https://example.com')
+        pulsar.assert_not_called()
+
+    def test_editor_sin_escritura_no_inyecta_codigo(self):
+        self.editor.acciones = {'escribir': False, 'click': True, 'scroll': False, 'mover_mouse': False}
+        with patch('editor_interactor.time.monotonic', side_effect=[0, 0, 0, 2, 2]), \
+                patch.object(self.editor, 'tiempo_restante', return_value=None), \
+                patch.object(self.editor, 'inyectar_codigo') as inyectar, \
+                patch.object(self.editor, 'fase_escritura') as escribir, \
+                patch.object(self.editor, 'fase_mouse') as mouse:
+            self.editor.interactuar_editor(duracion_maxima=1)
+        inyectar.assert_not_called()
+        escribir.assert_not_called()
+        mouse.assert_called_once()
+
+    def test_accion_editor_click_no_mueve_ni_desplaza(self):
+        self.editor.acciones = {'escribir': False, 'click': True, 'scroll': False, 'mover_mouse': False}
+        with patch.object(self.editor, '_configurar_area_mouse'), \
+                patch.object(self.editor, '_mouse_en_area_segura', return_value=True), \
+                patch.object(self.editor, '_move_to') as mover, \
+                patch.object(self.editor, '_move_rel') as mover_rel, \
+                patch.object(self.editor, '_scroll') as scroll, \
+                patch.object(self.editor, '_click') as click:
+            self.editor._movimiento_fase_mouse()
+        click.assert_called_once()
+        mover.assert_not_called()
+        mover_rel.assert_not_called()
+        scroll.assert_not_called()
+
+    def test_web_solo_scroll_no_mueve_ni_pulsa(self):
+        self.web.acciones = {'click': False, 'scroll': True, 'mover_mouse': False}
+        with patch.object(self.web, '_queda_tiempo', side_effect=[True, True, False]), \
+                patch.object(self.web, '_configurar_area_mouse', return_value=(300, 300)), \
+                patch.object(self.web, '_leer_url_actual', return_value='https://example.com'), \
+                patch.object(self.web, '_confirmar_destino_web'), \
+                patch.object(self.web, '_mouse_en_area_segura', return_value=True), \
+                patch.object(self.web, '_move_to') as mover, \
+                patch.object(self.web, '_click') as click, \
+                patch.object(self.web, '_scroll') as scroll, patch.object(self.web, '_esperar'):
+            self.web.interactuar_con_pagina('https://example.com')
+        mover.assert_not_called()
+        click.assert_not_called()
+        scroll.assert_called_once()
+
+    def test_navegador_cancela_movimiento_si_cambia_ventana(self):
+        self.web._ventana_web = 1
+        with patch.object(self.web, 'identidad_ventana_activa', return_value=2), \
+                patch.object(teclado, 'moveTo') as mover:
+            with self.assertRaisesRegex(RuntimeError, 'ventana del navegador'):
+                self.web._move_to(200, 200)
+        mover.assert_not_called()
+
+    def test_escritura_cancela_antes_del_evento_si_cambia_ventana(self):
+        self.editor._ventana_escritura_editor = 12
+        with patch.object(self.editor, 'identidad_ventana_activa', return_value=13):
+            with self.assertRaises(EditorNoDisponible):
+                EditorInteractor._insertar_caracter(self.editor, 'a')
+        teclado.write.assert_not_called()
+
+    def test_guardian_editor_lee_identidad_sin_recursion(self):
+        cuarzo = MagicMock()
+        cuarzo.CGWindowListCopyWindowInfo.return_value = [
+            {'kCGWindowLayer': 0, 'kCGWindowNumber': 12}]
+        self.editor.is_windows = False
+        self.editor.is_mac = True
+        self.editor._ventana_mouse_editor = 12
+        with patch.dict(sys.modules, {'Quartz': cuarzo}):
+            self.editor._antes_accion()
+        cuarzo.CGWindowListCopyWindowInfo.assert_called_once()
+
     def test_mouse_editor_no_envia_eventos_si_cambia_ventana(self):
         self.editor._ventana_mouse_editor = 12
         with patch.object(self.editor, 'identidad_ventana_activa', return_value=13):
@@ -385,6 +491,104 @@ class AutomationSafetyTest(unittest.TestCase):
                     self.editor.interactuar_editor(duracion_maxima=1)
                 self.assertEqual(escribir.call_count, escritura)
                 self.assertEqual(mover.call_count, mouse)
+
+    def test_rotacion_espera_a_terminar_la_linea_interrumpida(self):
+        from code_source import RealProjectSource
+        self.editor.fuente_codigo = unittest.mock.Mock(spec=RealProjectSource)
+        self.editor._fases_con_archivo = 3
+        self.editor.bloque_actual = ['    return total;']
+        self.editor.desplazamiento = 2
+        with patch.object(self.editor, '_duracion_fase_escritura', return_value=0), \
+                patch.object(self.editor, '_asegurar_destino'), \
+                patch.object(self.editor, 'inyectar_codigo') as cargar:
+            self.editor.fase_escritura(float('inf'))
+            cargar.assert_not_called()
+            self.assertEqual(self.editor.desplazamiento, 2)
+            self.assertEqual(self.editor.bloque_actual, ['    return total;'])
+            self.editor.desplazamiento = 0
+            self.editor.indice_linea = 1
+            self.editor.fase_escritura(float('inf'))
+            cargar.assert_called_once()
+
+    def test_interrupciones_reanudan_linea_exacta_con_sangria_y_vecinas(self):
+        from contextlib import ExitStack
+        original = ['const before = 1;', '    const value = fn("abc", { x: [1, 2] });  ', 'const after = 2;']
+        for modo in ('fase', 'pausa'):
+            for corte in (1, 2, 4, 8, len(original[1]) - 1, len(original[1])):
+                with self.subTest(modo=modo, corte=corte):
+                    lineas = list(original)
+                    estado = {'linea': 1, 'columna': 0, 'seleccion': False, 'interrumpir': True}
+                    self.editor.lineas_actuales = list(original)
+                    self.editor.bloque_actual = [original[1]]
+                    self.editor.inicio_bloque = 1
+                    self.editor.indice_linea = 0
+                    self.editor.desplazamiento = 0
+                    self.editor.necesita_reposicionar = True
+                    self.editor._lineas_observadas.clear()
+
+                    def ir(numero):
+                        estado.update(linea=numero - 1, columna=0, seleccion=False)
+                        self.editor._confirmar_linea_mac(numero)
+
+                    def seleccionar():
+                        estado['seleccion'] = True
+
+                    def leer_linea():
+                        estado.update(columna=0, seleccion=False)
+                        return lineas[estado['linea']]
+
+                    def insertar(caracter):
+                        indice = estado['linea']
+                        if estado['seleccion']:
+                            lineas[indice] = ''
+                            estado.update(columna=0, seleccion=False)
+                        columna = estado['columna']
+                        lineas[indice] = lineas[indice][:columna] + caracter + lineas[indice][columna:]
+                        estado['columna'] += 1
+
+                    def pulsar(tecla):
+                        if tecla == 'right':
+                            estado['columna'] += 1
+                            self.assertLessEqual(estado['columna'], len(lineas[estado['linea']]))
+                        elif tecla == 'left':
+                            estado.update(columna=0, seleccion=False)
+                        else:
+                            self.fail(f'Tecla inesperada: {tecla}')
+
+                    def queda(_):
+                        return not (estado['interrumpir'] and modo == 'fase'
+                                    and self.editor.desplazamiento >= corte)
+
+                    def esperar(_):
+                        if estado['interrumpir'] and modo == 'pausa' and self.editor.desplazamiento >= corte:
+                            raise PausaPorActividad()
+
+                    with ExitStack() as pila:
+                        for nombre, accion in {
+                            '_ir_a_linea': ir, '_limpiar_linea_actual': seleccionar,
+                            '_fin_linea': lambda: EditorInteractor._fin_linea(self.editor),
+                            '_verificar_seleccion_linea': lambda linea: EditorInteractor._verificar_seleccion_linea(self.editor, linea),
+                            '_leer_seleccion_mac': lambda: lineas[estado['linea']],
+                            '_leer_linea_completa_mac': leer_linea, '_insertar_caracter': insertar,
+                            '_press': pulsar, '_queda_tiempo_editor': queda, '_esperar': esperar,
+                            '_guardar_linea_actual_mac': lambda: EditorInteractor._guardar_linea_actual_mac(self.editor),
+                        }.items():
+                            pila.enter_context(patch.object(self.editor, nombre, side_effect=accion))
+                        if modo == 'pausa':
+                            with self.assertRaises(PausaPorActividad):
+                                self.editor._escribir_siguiente_linea(float('inf'))
+                        else:
+                            self.editor._escribir_siguiente_linea(float('inf'))
+                        if self.editor.indice_linea == 0:
+                            self.assertEqual(self.editor.desplazamiento, corte)
+                            self.assertEqual(lineas[1], original[1][:corte])
+                            # Otra fase puede mover el cursor, sin alterar el fragmento pendiente.
+                            estado.update(linea=0, columna=0, seleccion=False, interrumpir=False)
+                            self.editor.necesita_reposicionar = True
+                            self.editor._escribir_siguiente_linea(float('inf'))
+                    self.assertEqual(lineas, original)
+                    self.assertEqual(self.editor.indice_linea, 1)
+                    self.assertEqual(self.editor.desplazamiento, 0)
 
     def test_cambia_fuente_real_tras_tres_fases(self):
         from code_source import RealProjectSource
@@ -826,12 +1030,70 @@ class AutomationSafetyTest(unittest.TestCase):
             with self.assertRaises(EditorNoDisponible):
                 self.editor._confirmar_linea_mac(1)
 
-    def test_caracter_se_inserta_por_pegado_sin_autocierre(self):
-        with patch.object(self.editor, 'copiar_al_portapapeles', return_value=True) as copiar:
+    def test_caracter_se_escribe_sin_usar_portapapeles(self):
+        with patch.object(self.editor, 'copiar_al_portapapeles') as copiar:
             EditorInteractor._insertar_caracter(self.editor, '(')
-        copiar.assert_called_once_with('(')
-        teclado.hotkey.assert_called_once_with(self.editor.cmd_key, 'v')
+        copiar.assert_not_called()
+        teclado.hotkey.assert_not_called()
+        teclado.write.assert_called_once_with('(', interval=0)
+
+    @unittest.skipUnless(sys.platform == 'darwin', 'Lanzamiento nativo de VS Code en macOS')
+    def test_abrir_espacio_nuevo_y_recuperar_solo_el_archivo(self):
+        self.editor.is_mac = True
+        self.editor.directorio_trabajo = '/tmp/workbreak_prueba'
+        aplicacion = MagicMock()
+        aplicacion.path.return_value = '/Applications/Visual Studio Code.app'
+        with patch('AppKit.NSWorkspace') as workspace, \
+                patch('editor_interactor.Path.is_file', return_value=True):
+            workspace.sharedWorkspace.return_value.URLForApplicationWithBundleIdentifier_.return_value = aplicacion
+            inicial = self.editor._comando_abrir_editor('vsCode', '/tmp/workbreak_prueba/archivo.tsx')
+            self.assertEqual(inicial[1:], ['--new-window', '/tmp/workbreak_prueba', '/tmp/workbreak_prueba/archivo.tsx'])
+            self.editor.EDITOR_ABIERTO = True
+            recuperar = self.editor._comando_abrir_editor('vsCode', '/tmp/workbreak_prueba/archivo.tsx')
+            self.assertEqual(recuperar[1:], ['/tmp/workbreak_prueba/archivo.tsx'])
+
+    def test_navegacion_nativa_no_escribe_coordenadas_en_el_editor(self):
+        self.editor.is_mac = True
+        self.editor.editor_actual = 'vsCode'
+        self.editor.directorio_trabajo = '/tmp/workbreak_prueba'
+        self.editor.ruta_archivo = '/tmp/workbreak_prueba/archivo.tsx'
+        with patch.object(self.editor, '_comando_abrir_editor', return_value=['code', self.editor.ruta_archivo]), \
+                patch.object(self.editor, 'ejecutar_comando', return_value=True) as ejecutar, \
+                patch.object(self.editor, '_confirmar_linea_mac') as confirmar:
+            self.editor._ir_a_linea(25)
+        ejecutar.assert_called_once_with(['code', '--goto', '/tmp/workbreak_prueba/archivo.tsx:25:1'])
+        confirmar.assert_called_once_with(25)
         teclado.write.assert_not_called()
+        teclado.hotkey.assert_not_called()
+
+    def test_error_navegando_no_autoriza_reescritura(self):
+        self.editor.is_mac = True
+        self.editor.directorio_trabajo = '/tmp/workbreak_prueba'
+        self.editor.ruta_archivo = '/tmp/workbreak_prueba/archivo.tsx'
+        with patch.object(self.editor, '_comando_abrir_editor', return_value=['code', self.editor.ruta_archivo]), \
+                patch.object(self.editor, 'ejecutar_comando', return_value=False), \
+                patch.object(self.editor, '_confirmar_linea_mac') as confirmar:
+            with self.assertRaises(EditorNoDisponible):
+                self.editor._ir_a_linea(25)
+        confirmar.assert_not_called()
+        teclado.write.assert_not_called()
+
+    def test_espacio_temporal_aisla_autocierre_y_formateo(self):
+        import json
+        import tempfile
+        from pathlib import Path
+        with tempfile.TemporaryDirectory() as temporal, \
+                patch('editor_interactor.tempfile.mkdtemp', return_value=temporal):
+            ruta = Path(self.editor._crear_archivo_temporal())
+            self.assertEqual(ruta.read_text(), '')
+            ajustes = json.loads((ruta.parent / '.vscode/settings.json').read_text())
+            self.assertEqual(ajustes['editor.autoClosingBrackets'], 'never')
+            self.assertFalse(ajustes['[typescriptreact]']['editor.formatOnType'])
+            self.assertFalse(ajustes['editor.trimAutoWhitespace'])
+            self.assertFalse(ajustes['editor.formatOnSave'])
+            self.assertFalse(ajustes['files.trimTrailingWhitespace'])
+            self.assertEqual(ajustes['files.autoSave'], 'off')
+            self.assertEqual(self.editor.directorio_trabajo, str(ruta.parent))
 
     def test_mouse_se_limita_al_area_segura_y_no_pulsa_fuera(self):
         self.editor.is_mac = False

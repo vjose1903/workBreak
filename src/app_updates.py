@@ -28,7 +28,10 @@ def interpretar_release(release, version_actual=VERSION, arquitectura=None):
     numero = version.removeprefix('v')
     nombre = f'WorkBreak-{numero}-macos-{arquitectura}.dmg'
     esperado = f'https://github.com/{GITHUB_REPO}/releases/download/{version}/{nombre}'
-    for asset in release.get('assets', []):
+    assets = release.get('assets', [])
+    if not isinstance(assets, list) or any(not isinstance(asset, dict) for asset in assets):
+        raise ValueError('GitHub devolvió una lista de instaladores inválida')
+    for asset in assets:
         if asset.get('name') == nombre and asset.get('browser_download_url') == esperado:
             return {'version': numero, 'url': esperado, 'bytes': asset.get('size'),
                     'sha256': str(asset.get('digest', '')).removeprefix('sha256:')}
@@ -64,6 +67,8 @@ class Actualizador:
         self.cancelacion = threading.Event()
         self.preparada = None
         self.entregada = False
+        self._limpiezas = set()
+        self._mutex_limpieza = threading.Lock()
 
     def buscar(self):
         if self.consultando:
@@ -107,17 +112,33 @@ class Actualizador:
     def cancelar(self):
         self.cancelacion.set()
 
+    @property
+    def limpiando(self):
+        with self._mutex_limpieza:
+            return bool(self._limpiezas)
+
     def descartar(self):
         if self.preparada is not None and not self.entregada:
             preparada = self.preparada
             self.preparada = None
+            with self._mutex_limpieza:
+                self._limpiezas.add(preparada['carpeta'])
             def limpiar():
                 try:
                     limpiar_descarga(preparada)
                 except Exception as error:
                     logging.warning('Descarga conservada para limpieza posterior: %s', json.dumps({
                         'carpeta': preparada['carpeta'], 'error': str(error)}))
-            threading.Thread(target=limpiar, daemon=True, name='limpieza-actualizacion').start()
+                finally:
+                    with self._mutex_limpieza:
+                        self._limpiezas.discard(preparada['carpeta'])
+            try:
+                threading.Thread(target=limpiar, daemon=True, name='limpieza-actualizacion').start()
+            except RuntimeError as error:
+                with self._mutex_limpieza:
+                    self._limpiezas.discard(preparada['carpeta'])
+                logging.warning('No se pudo iniciar la limpieza: %s', json.dumps({
+                    'carpeta': preparada['carpeta'], 'error': str(error)}))
 
     def instalar(self):
         if self.preparada is None:

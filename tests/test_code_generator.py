@@ -81,6 +81,18 @@ class CodeGeneratorTest(unittest.TestCase):
         self.assertGreaterEqual(len(codigo.splitlines()), 40)
         self.assertTrue(_esta_balanceado(codigo))
 
+    def test_archivo_largo_no_duplica_export_default_ni_nombres(self):
+        generador = CodeGenerator()
+        codigo = generador.generar_codigo(min_lineas=1400, max_lineas=2000)
+        self.assertEqual(codigo.count('export default '), 1)
+        nombres = re.findall(r'export (?:const|type|interface) (\w+)', codigo)
+        self.assertEqual(len(nombres), len(set(nombres)))
+
+    def test_rango_invalido_se_rechaza_antes_de_generar(self):
+        for minimo, maximo in ((-1, 10), (20, 10), (True, 20), (10, '20')):
+            with self.subTest(minimo=minimo, maximo=maximo), self.assertRaises(ValueError):
+                CodeGenerator().generar_codigo(minimo, maximo)
+
 
 if __name__ == '__main__':
     unittest.main()

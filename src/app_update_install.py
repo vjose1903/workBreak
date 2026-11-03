@@ -16,7 +16,7 @@ import time
 from urllib.request import Request, urlopen
 from xml.etree import ElementTree
 
-from app_version import APP_ID, GITHUB_REPO, version_numerica
+from app_version import APP_ID, GITHUB_REPO, VERSION, version_numerica
 
 
 class ActualizacionCancelada(Exception):
@@ -24,6 +24,8 @@ class ActualizacionCancelada(Exception):
 
 
 def ejecutar_cancelable(args, cancelar, timeout):
+    if cancelar.is_set():
+        raise ActualizacionCancelada()
     limite = time.monotonic() + timeout
     proceso = subprocess.Popen(args, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
     try:
@@ -60,7 +62,8 @@ def limpiar_descarga(preparada):
 
 def preparar_descarga(nueva, informar, cancelar):
     import certifi
-    version_numerica(nueva['version'])
+    if version_numerica(nueva['version']) <= version_numerica(VERSION):
+        raise ValueError('La actualización debe ser posterior a la versión instalada')
     arquitectura = platform.machine()
     nombre = f"WorkBreak-{nueva['version']}-macos-{arquitectura}"
     url = f"https://github.com/{GITHUB_REPO}/releases/download/v{nueva['version']}/{nombre}.dmg"
@@ -82,6 +85,7 @@ def preparar_descarga(nueva, informar, cancelar):
         dmg = carpeta / (nombre + '.dmg')
         digest = hashlib.sha256()
         recibidos = 0
+        limite_descarga = time.monotonic() + 900
         contexto = ssl.create_default_context(cafile=certifi.where())
         with urlopen(Request(url, headers={'User-Agent': 'WorkBreak-Updater'}),
                      timeout=15, context=contexto) as respuesta, dmg.open('xb') as salida:
@@ -89,7 +93,10 @@ def preparar_descarga(nueva, informar, cancelar):
                 raise ValueError('La descarga no utiliza HTTPS')
             while True:
                 comprobar_cancelacion()
-                bloque = respuesta.read(256 * 1024)
+                if time.monotonic() >= limite_descarga:
+                    raise TimeoutError('La descarga superó el tiempo máximo de 15 minutos')
+                bloque = respuesta.read1(256 * 1024)
+                comprobar_cancelacion()
                 if not bloque:
                     break
                 recibidos += len(bloque)

@@ -22,6 +22,29 @@ class MenuMacTest(unittest.TestCase):
         guardar.start()
         self.addCleanup(guardar.stop)
 
+    def test_cierre_nativo_espera_limpieza_sin_bloquear_el_hilo_principal(self):
+        self.menu.actualizador.preparada = {'carpeta': '/tmp/prueba'}
+        with patch.object(self.menu.actualizador, 'descartar') as descartar, \
+                patch.object(self.menu, 'solicitar_salida') as salir:
+            def iniciar_limpieza():
+                self.menu.actualizador._limpiezas.add('/tmp/prueba')
+            descartar.side_effect = iniciar_limpieza
+            self.assertEqual(self.menu.applicationShouldTerminate_(None), 0)
+        salir.assert_called_once()
+
+    def test_dialogo_tiempo_rechaza_numeros_extremos_sin_excepcion_nativa(self):
+        from mac_menu import DialogoTiempo
+        dialogo = DialogoTiempo.alloc().init()
+        dialogo.preparar(1)
+        dialogo.campos[0].setStringValue_('9'*5000)
+        notificacion = MagicMock()
+        notificacion.object.return_value = dialogo.campos[0]
+        dialogo.controlTextDidChange_(notificacion)
+        with patch('mac_menu.NSApplication') as app:
+            dialogo.guardar_(None)
+        app.sharedApplication.assert_not_called()
+        self.assertIn('válidas', dialogo.error.stringValue())
+
     def test_webs_se_normalizan_y_se_eliminan_duplicados(self):
         self.assertEqual(normalizar_webs('example.com, https://example.com\nhttp://localhost:8000'),
                          ['https://example.com', 'http://localhost:8000'])
@@ -33,16 +56,16 @@ class MenuMacTest(unittest.TestCase):
             self.menu.configurar('webs')
         self.assertEqual(self.menu.config['paginas'], ['https://example.com'])
 
-    def test_tiempo_y_fases_se_configuran_sin_menu_terminal(self):
+    def test_tiempo_y_acciones_se_configuran_sin_menu_terminal(self):
         with patch('mac_menu.DialogoTiempo') as dialogo:
             instancia = dialogo.alloc.return_value.init.return_value
             instancia.mostrar.return_value = True
             instancia.minutos = 15
             self.menu.configurar('tiempo')
-        self.menu.configurar('fase:mouse')
+        self.menu.configurar('accion:editor:escribir')
         self.menu.configurar('browser:chrome')
         self.assertEqual(self.menu.config['tiempo'], 15)
-        self.assertEqual(self.menu.config['fases'], 'mouse')
+        self.assertFalse(self.menu.config['acciones_editor']['escribir'])
         self.assertEqual(self.menu.config['browser'], 'chrome')
 
     def test_cargar_historial_no_muta_el_registro_original(self):

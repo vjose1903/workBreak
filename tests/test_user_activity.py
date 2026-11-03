@@ -46,6 +46,8 @@ class MonitorActividadTest(unittest.TestCase):
             reloj[0] = 104.999
             monitor.registrar(('mouse', 0), True)
             monitor.comprobar()
+            self.assertIn(('mouse', 0), monitor._pulsadas)
+            monitor.registrar(('mouse', 0), False)
             self.assertFalse(monitor._pulsadas)
             self.assertIsNone(monitor._ultima)
             reloj[0] = 105
@@ -54,6 +56,41 @@ class MonitorActividadTest(unittest.TestCase):
                 monitor.comprobar()
         self.assertEqual(monitor.debounce, 10)
         self.assertEqual(monitor._ultima, 105)
+
+    def test_pulsacion_mantenida_en_el_margen_inicial_pausa_al_terminar_el_margen(self):
+        monitor = MonitorActividad()
+        monitor._detectar_desde = 105
+        with patch('user_activity.time.monotonic', return_value=104):
+            monitor.registrar(('tecla', 36), True)
+            monitor.comprobar()
+        with patch('user_activity.time.monotonic', return_value=105):
+            with self.assertRaises(PausaPorActividad):
+                monitor.comprobar()
+        self.assertEqual(monitor._ultima, 105)
+
+    def test_liberacion_perdida_en_el_margen_no_provoca_pausa_falsa(self):
+        monitor = MonitorActividad()
+        monitor._detectar_desde = 105
+        with patch('user_activity.time.monotonic', return_value=104):
+            monitor.registrar(('tecla', 36), True)
+        monitor._esta_pulsada = lambda _: False
+        with patch('user_activity.time.monotonic', return_value=105):
+            monitor.comprobar()
+        self.assertFalse(monitor._pulsadas)
+        self.assertIsNone(monitor._ultima)
+
+    def test_detecta_tecla_ya_pulsada_antes_de_crear_el_monitor(self):
+        monitor = MonitorActividad()
+        monitor._detectar_desde = 105
+        monitor._pulsadas_fisicas = MagicMock(return_value=[('tecla', 36)])
+        with patch('user_activity.time.monotonic', return_value=104):
+            monitor.comprobar()
+        monitor._pulsadas_fisicas.assert_not_called()
+        with patch('user_activity.time.monotonic', return_value=105):
+            with self.assertRaises(PausaPorActividad):
+                monitor.comprobar()
+        monitor._pulsadas_fisicas.assert_called_once()
+        self.assertIn(('tecla', 36), monitor._pulsadas)
 
     def test_cada_evento_reinicia_los_diez_segundos(self):
         monitor = MonitorActividad()

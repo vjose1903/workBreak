@@ -20,6 +20,27 @@ class PreferenciasTest(unittest.TestCase):
             self.assertEqual(cargar_preferencias(), config)
             self.assertEqual(json.loads((Path(carpeta) / 'preferences.json').read_text())['modo'], 'web')
 
+    def test_archivo_gigante_anidado_o_no_regular_no_impide_arrancar(self):
+        import os
+        from app_paths import MAX_JSON_BYTES
+        with tempfile.TemporaryDirectory() as carpeta, patch('app_preferences.directorio_datos', return_value=Path(carpeta)):
+            ruta = Path(carpeta)/'preferences.json'
+            for contenido in (b' '*(MAX_JSON_BYTES+1), b'['*1500+b'0'+b']'*1500):
+                ruta.write_bytes(contenido)
+                self.assertIsNone(cargar_preferencias())
+            ruta.unlink()
+            os.mkfifo(ruta)
+            self.assertIsNone(cargar_preferencias())
+
+    def test_guardar_configuracion_excesiva_preserva_anterior(self):
+        from app_paths import MAX_JSON_BYTES
+        with tempfile.TemporaryDirectory() as carpeta, patch('app_preferences.directorio_datos', return_value=Path(carpeta)):
+            config = _config_a_dict(Configuracion())
+            guardar_preferencias(config)
+            with self.assertRaisesRegex(ValueError, '2 MiB'):
+                guardar_preferencias({**config, 'fuente_descripcion': 'a' * MAX_JSON_BYTES})
+            self.assertEqual(cargar_preferencias(), config)
+
     def test_error_de_escritura_preserva_configuracion_anterior(self):
         with tempfile.TemporaryDirectory() as carpeta, patch('app_preferences.directorio_datos', return_value=Path(carpeta)):
             config = _config_a_dict(Configuracion())

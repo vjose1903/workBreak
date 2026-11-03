@@ -33,6 +33,22 @@ class DistribucionTest(unittest.TestCase):
             self.assertEqual(nueva['version'], '1.1.0')
             self.assertTrue(nueva['url'].endswith(f'{arch}.dmg'))
 
+    def test_respuesta_con_assets_malformados_se_rechaza(self):
+        for assets in (None, {}, ['archivo']):
+            with self.subTest(assets=assets), self.assertRaisesRegex(ValueError, 'lista de instaladores'):
+                interpretar_release({'tag_name': 'v9.0.0', 'assets': assets}, '1.0.0', 'arm64')
+
+    def test_helper_python_respeta_limites_de_version_de_macos(self):
+        import importlib.util
+        ruta = Path(__file__).resolve().parent.parent/'scripts/version.py'
+        spec = importlib.util.spec_from_file_location('workbreak_version_test', ruta)
+        modulo = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(modulo)
+        self.assertEqual(modulo.incrementar('1.2.3', 'patch'), '1.2.4')
+        for version, cambio in (('9999.0.0', 'major'), ('1.99.0', 'minor'), ('1.0.99', 'patch'), ('1.0.0', 'otro')):
+            with self.subTest(version=version, cambio=cambio), self.assertRaises(ValueError):
+                modulo.incrementar(version, cambio)
+
     def test_version_menor_o_igual_no_es_actualizacion(self):
         for actual in ('1.1.0', '2.0.0'):
             self.assertIsNone(interpretar_release(self.release(), actual, 'x86_64'))

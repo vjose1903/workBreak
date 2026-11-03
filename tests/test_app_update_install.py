@@ -73,6 +73,28 @@ class InstalacionTest(unittest.TestCase):
         with self.assertRaises(ActualizacionCancelada):
             self.preparar(nueva, contenido, cancelacion)
 
+    def test_descarga_lenta_tiene_limite_total(self):
+        contenido, nueva = self.datos()
+        with patch('app_update_install.time.monotonic', side_effect=[0, 901]):
+            with self.assertRaisesRegex(TimeoutError, '15 minutos'):
+                self.preparar(nueva, contenido)
+
+    def test_cancelacion_previa_no_inicia_auxiliar(self):
+        from app_update_install import ejecutar_cancelable
+        cancelar = threading.Event()
+        cancelar.set()
+        with patch('app_update_install.subprocess.Popen') as lanzar:
+            with self.assertRaises(ActualizacionCancelada):
+                ejecutar_cancelable(['auxiliar'], cancelar, 60)
+        lanzar.assert_not_called()
+
+    def test_no_admite_instalar_version_actual_o_anterior(self):
+        from app_version import VERSION
+        contenido, nueva = self.datos()
+        for version in (VERSION, '0.0.0'):
+            with self.subTest(version=version), self.assertRaisesRegex(ValueError, 'posterior'):
+                self.preparar({**nueva, 'version': version}, contenido)
+
     def test_rechaza_url_o_metadatos_inseguros(self):
         contenido, nueva = self.datos()
         for cambio in ({'url': 'https://otro.example/app.dmg'}, {'sha256': ''}, {'bytes': True}, {'bytes': 0}):

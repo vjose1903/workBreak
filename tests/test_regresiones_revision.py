@@ -48,6 +48,32 @@ class RegresionesRevision(unittest.TestCase):
         with self.assertRaises(subprocess.TimeoutExpired):
             ejecutar_cancelable([sys.executable, '-c', 'import time; time.sleep(20)'], threading.Event(), 0)
 
+    def test_limpieza_publica_estado_hasta_terminar(self):
+        import time
+        actualizador = Actualizador()
+        actualizador.preparada = {'carpeta': '/tmp/descarga-prueba'}
+        inicio, liberar = threading.Event(), threading.Event()
+        def limpiar(_):
+            inicio.set()
+            liberar.wait(2)
+        with patch('app_updates.limpiar_descarga', side_effect=limpiar):
+            actualizador.descartar()
+            self.assertTrue(inicio.wait(2))
+            self.assertTrue(actualizador.limpiando)
+            liberar.set()
+            limite = time.monotonic()+2
+            while actualizador.limpiando and time.monotonic()<limite:
+                time.sleep(0.01)
+            self.assertFalse(actualizador.limpiando)
+
+    def test_error_creando_hilo_no_deja_limpieza_permanente(self):
+        actualizador = Actualizador()
+        actualizador.preparada = {'carpeta': '/tmp/descarga-prueba'}
+        with patch('app_updates.threading.Thread') as hilo:
+            hilo.return_value.start.side_effect = RuntimeError('sin recursos')
+            actualizador.descartar()
+        self.assertFalse(actualizador.limpiando)
+
     def test_error_limpieza_no_bloquea_cierre(self):
         actualizador = Actualizador()
         actualizador.preparada = {'carpeta': '/tmp/descarga-prueba'}

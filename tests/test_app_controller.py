@@ -48,6 +48,60 @@ class ContextoCancelado(ContextoSimulado):
 
 
 class ControladorBotTest(unittest.TestCase):
+    def test_error_abriendo_log_llega_a_la_interfaz(self):
+        eventos = queue.Queue()
+        with patch('app_controller.signal.signal'), \
+                patch('app_controller.RotatingFileHandler', side_effect=PermissionError('sin permiso')):
+            with self.assertRaises(SystemExit):
+                ejecutar_proceso_bot({}, MagicMock(), eventos, '/no/log', os.getppid())
+        self.assertIn('sin permiso', eventos.get_nowait()['mensaje'])
+        self.assertEqual(eventos.get_nowait()['codigo'], 1)
+
+    def test_fallo_de_arranque_libera_la_cola_y_el_proceso(self):
+        contexto = MagicMock()
+        contexto.Process.return_value.start.side_effect = OSError('sin recursos')
+        with tempfile.TemporaryDirectory() as carpeta:
+            controlador = ControladorBot(contexto=contexto, ruta_log=Path(carpeta)/'log')
+            with self.assertRaisesRegex(OSError, 'sin recursos'):
+                controlador.iniciar(_config_a_dict(Configuracion()))
+        contexto.Queue.return_value.close.assert_called_once()
+        contexto.Process.return_value.close.assert_called_once()
+        self.assertIsNone(controlador.proceso)
+        self.assertIsNone(controlador.eventos)
+        self.assertIsNone(controlador.detencion)
+
+    def test_actualizar_limita_el_trabajo_de_cada_tick(self):
+        with tempfile.TemporaryDirectory() as carpeta:
+            controlador = ControladorBot(ruta_log=Path(carpeta)/'log')
+            controlador.eventos = MagicMock()
+            controlador.eventos.get_nowait.return_value = {'tipo': 'registro', 'mensaje': 'dato'}
+            controlador.actualizar()
+            self.assertEqual(controlador.eventos.get_nowait.call_count, 256)
+
+    def test_canal_roto_finaliza_con_error_controlado(self):
+        with tempfile.TemporaryDirectory() as carpeta:
+            controlador = ControladorBot(ruta_log=Path(carpeta)/'log')
+            controlador.eventos = MagicMock()
+            controlador.eventos.get_nowait.side_effect = EOFError('canal cerrado')
+            controlador.proceso = MagicMock()
+            controlador.proceso.is_alive.return_value = False
+            controlador.proceso.exitcode = 0
+            controlador.actualizar()
+            self.assertEqual(controlador.estado['estado'], 'error')
+            self.assertIn('canal cerrado', controlador.ultimo_error)
+
+    def test_mensaje_largo_no_satura_el_canal_y_conserva_registro_original(self):
+        import logging
+        import pickle
+        from app_controller import RegistroInterfaz
+        eventos = queue.Queue()
+        registro = logging.LogRecord('bot', logging.ERROR, '', 0, '🙂'*10000, (), None)
+        RegistroInterfaz(eventos).emit(registro)
+        evento = eventos.get_nowait()
+        self.assertLess(len(pickle.dumps(evento)), 4096)
+        self.assertIn('ver registro completo', evento['mensaje'])
+        self.assertEqual(registro.getMessage(), '🙂'*10000)
+
     def test_worker_solo_web_acepta_directorio_sin_cargarlo(self):
         registro = _config_a_dict(Configuracion(modo='web', browser='chrome', paginas=['https://example.com']))
         registro.update(fuente_tipo='directorio', directorio='/fuente/no/disponible')

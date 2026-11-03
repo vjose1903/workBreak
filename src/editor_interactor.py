@@ -1,6 +1,7 @@
 import json
 import logging
 import os
+from pathlib import Path
 import pyautogui
 import random
 import re
@@ -13,6 +14,8 @@ from base_automation import BaseAutomation, FailsafeActivo, PortapapelesNoDispon
 from code_generator import CodeGenerator
 from code_source import RealProjectSource
 from statistics_tracker import StatisticsTracker
+from menu import acciones_config
+from editor_catalog import EDITORES, binario_editor
 
 
 class EditorNoDisponible(Exception):
@@ -26,7 +29,7 @@ class EditorInteractor(BaseAutomation):
 
         self.stats_tracker = stats_tracker
         self.fuente_codigo = fuente_codigo or CodeGenerator()
-        self.VALID_EDITORS = ["vsCode"]
+        self.VALID_EDITORS = list(EDITORES)
         self.EDITOR_STARTUP_TIME = 2
         self.EDITOR_WINDOW_OFFSET = 20
         self.EDITOR_ABIERTO = False
@@ -35,17 +38,17 @@ class EditorInteractor(BaseAutomation):
         self.lineas_actuales = None
         self._lineas_observadas = {}
         self.fases = "ambas"
+        self.acciones = None
         self.bloque_actual = None
         self.inicio_bloque = 0
         self.indice_linea = 0
         self.desplazamiento = 0
         self.necesita_reposicionar = True
         self.ruta_archivo = None
+        self.directorio_trabajo = None
         self.informar_estado = None
         self._fases_con_archivo = 0
-        self.EDITOR_INFO = {
-            "vsCode": {"proceso": "Code.exe", "mac": "Visual Studio Code"},
-        }
+        self.EDITOR_INFO = EDITORES
 
     def validar_editor(self, value: str) -> str:
         """Valida que el editor esté en la lista de editores válidos"""
@@ -54,22 +57,24 @@ class EditorInteractor(BaseAutomation):
         return value
 
     def _comando_abrir_editor(self, editor: str, ruta_archivo: Optional[str]) -> Optional[list]:
-        """Construye el comando para abrir el editor con el archivo indicado; None si no se soporta"""
         if editor not in self.VALID_EDITORS:
             return None
-        if self.is_windows:
-            binarios = {"vsCode": "code", "cursor": "cursor"}
-            cmd = [binarios[editor]]
-            if ruta_archivo:
-                cmd.append(ruta_archivo)
-            return cmd
-        if self.is_mac:
-            nombre_app = self.EDITOR_INFO[editor]["mac"]
-            cmd = ["open", "-g", "-a", nombre_app]
-            if ruta_archivo:
-                cmd.append(ruta_archivo)
-            return cmd
-        return None
+        if self.is_mac and self.directorio_trabajo:
+            binario = binario_editor(editor)
+            if binario is None:
+                return None
+            cmd = [binario]
+        elif self.is_windows:
+            cmd = [EDITORES[editor]['binario']]
+        elif self.is_mac:
+            cmd = ['open', '-g', '-a', self.EDITOR_INFO[editor]['mac']]
+        else:
+            return None
+        if self.directorio_trabajo and not self.EDITOR_ABIERTO:
+            cmd.extend(['--new-window', self.directorio_trabajo])
+        if ruta_archivo:
+            cmd.append(ruta_archivo)
+        return cmd
 
     def ejecutar_comando(self, cmd: list) -> bool:
         """Ejecuta el comando para abrir el editor; True si se lanzó correctamente"""
@@ -97,12 +102,35 @@ class EditorInteractor(BaseAutomation):
 
     def _crear_archivo_temporal(self) -> str:
         """Crea una pestaña de trabajo vacía con nombre único por sesión."""
-        descriptor, ruta = tempfile.mkstemp(prefix="workbreak_", suffix=".tsx")
-        os.close(descriptor)
-        return ruta
+        carpeta = Path(tempfile.mkdtemp(prefix="workbreak_"))
+        self.directorio_trabajo = str(carpeta)
+        ajustes_editor = {
+            "editor.autoClosingBrackets": "never",
+            "editor.autoClosingQuotes": "never",
+            "editor.autoClosingComments": "never",
+            "editor.autoSurround": "never",
+            "editor.autoIndent": "none",
+            "editor.formatOnType": False,
+            "editor.formatOnPaste": False,
+            "editor.formatOnSave": False,
+            "editor.trimAutoWhitespace": False,
+            "editor.quickSuggestions": False,
+            "editor.suggestOnTriggerCharacters": False,
+            "editor.acceptSuggestionOnEnter": "off",
+            "editor.inlineSuggest.enabled": False,
+            "editor.linkedEditing": False,
+        }
+        # Las preferencias del usuario por lenguaje prevalecen sobre ajustes genéricos.
+        ajustes = {**ajustes_editor, "[typescriptreact]": ajustes_editor,
+                   "files.autoSave": "off", "files.trimTrailingWhitespace": False}
+        (carpeta / '.vscode').mkdir()
+        (carpeta / '.vscode/settings.json').write_text(json.dumps(ajustes, indent=2), encoding='utf-8')
+        ruta = carpeta / (carpeta.name + '.tsx')
+        ruta.touch()
+        return str(ruta)
 
     def abrir_editor(self, editor: str) -> None:
-        """Abre VS Code con el archivo temporal; falla si no está disponible."""
+        """Abre el editor seleccionado con el archivo temporal; falla si no está disponible."""
         if self.EDITOR_ABIERTO:
             return
 
@@ -110,11 +138,11 @@ class EditorInteractor(BaseAutomation):
             # El nombre único permite distinguir esta pestaña de las del usuario.
             self.ruta_archivo = self._crear_archivo_temporal()
 
-            efectivo = self._lanzar_editor_primero_disponible(editor, self.ruta_archivo)
+            efectivo = self._lanzar_editor(editor, self.ruta_archivo)
             if efectivo is None:
                 raise EditorNoDisponible(
                     f"No se pudo abrir ningún editor instalado. "
-                    "Instala Visual Studio Code para ejecutar el bot."
+                    "Instala un editor compatible para ejecutar el bot."
                 )
 
             info = self.EDITOR_INFO[efectivo]
@@ -130,17 +158,11 @@ class EditorInteractor(BaseAutomation):
         except Exception as e:
             self.manejar_error(f"Error al abrir el editor {editor}: {e}")
 
-    def _lanzar_editor_primero_disponible(self, editor: str, ruta_archivo: Optional[str]) -> Optional[str]:
-        """Intenta lanzar el editor pedido y luego los demás; devuelve el efectivo o None"""
-        candidatos = [editor] + [e for e in self.VALID_EDITORS if e != editor]
-        for e in candidatos:
-            cmd = self._comando_abrir_editor(e, ruta_archivo)
-            if not cmd:
-                continue
-            logging.info(f"Abriendo editor: {e}")
-            if self.ejecutar_comando(cmd):
-                return e
-            logging.warning(f"El editor '{e}' no pudo abrirse; se intenta con el siguiente")
+    def _lanzar_editor(self, editor: str, ruta_archivo: Optional[str]) -> Optional[str]:
+        """Abre únicamente el editor elegido por el usuario."""
+        cmd = self._comando_abrir_editor(editor, ruta_archivo)
+        if cmd and self.ejecutar_comando(cmd):
+            return editor
         return None
 
     def _esperar_ventana_editor(self, info: dict) -> bool:
@@ -219,6 +241,9 @@ class EditorInteractor(BaseAutomation):
 
         `duracion_maxima` limita el turno actual (usado al alternar con el navegador).
         """
+        acciones = acciones_config({'fases': self.fases, 'acciones_editor': self.acciones}, 'editor')
+        if not any(acciones.values()):
+            return
         tiempo_inicio = time.monotonic()
         tiempo_restante = self.tiempo_restante()
 
@@ -239,15 +264,15 @@ class EditorInteractor(BaseAutomation):
         logging.info(f"Iniciando interacción con editor por {duracion / 60:.1f} minutos")
 
         try:
-            if self.lineas_actuales is None:
+            if acciones["escribir"] and self.lineas_actuales is None:
                 self.inyectar_codigo()
                 if self.lineas_actuales is None:
                     return
 
             while time.monotonic() < tiempo_final:
-                if self.fases in ("ambas", "escritura"):
+                if acciones["escribir"]:
                     self.fase_escritura(tiempo_final)
-                if self.fases in ("ambas", "mouse"):
+                if any(acciones[k] for k in ("click", "scroll", "mover_mouse")):
                     self.fase_mouse(tiempo_final)
 
         except pyautogui.FailSafeException:
@@ -263,7 +288,11 @@ class EditorInteractor(BaseAutomation):
         """Fase de escritura con duración variable: borra y reescribe bloques reales de código"""
         if not self._queda_tiempo_editor(tiempo_final):
             return
-        if isinstance(self.fuente_codigo, RealProjectSource) and self._fases_con_archivo >= 3:
+        linea_pendiente = (self.bloque_actual is not None
+                           and self.indice_linea < len(self.bloque_actual)
+                           and self.desplazamiento > 0)
+        if (isinstance(self.fuente_codigo, RealProjectSource)
+                and self._fases_con_archivo >= 3 and not linea_pendiente):
             self.inyectar_codigo()
         self._fases_con_archivo += 1
         if self.informar_estado:
@@ -281,8 +310,7 @@ class EditorInteractor(BaseAutomation):
             self._esperar(random.uniform(0.4, 1.8))
 
     def fase_mouse(self, tiempo_final: float) -> None:
-        """Fase de mouse: sube al inicio del archivo, hace clic y scroll arriba/abajo para que las
-        capturas muestren el código; al terminar vuelve a la línea donde continuará la escritura"""
+        """Ejecuta las acciones de mouse habilitadas dentro de la ventana confirmada."""
         if self.informar_estado:
             self.informar_estado('ejecutando', fase='mouse')
         if not self._queda_tiempo_editor(tiempo_final):
@@ -309,18 +337,23 @@ class EditorInteractor(BaseAutomation):
 
     def _antes_accion(self):
         super()._antes_accion()
-        ventana = getattr(self, '_ventana_mouse_editor', None)
+        ventana = (getattr(self, '_ventana_escritura_editor', None)
+                   or getattr(self, '_ventana_mouse_editor', None))
         if ventana is not None and self.identidad_ventana_activa() != ventana:
             raise EditorNoDisponible('Cambió la ventana del editor; se cancela la interacción')
 
     def _iniciar_fase_mouse(self) -> None:
-        """Sube al inicio del archivo y hace clic sobre el editor para enfocarlo"""
+        """Prepara el área segura y ejecuta solo las acciones habilitadas."""
+        acciones = acciones_config({'fases': self.fases, 'acciones_editor': self.acciones}, 'editor')
         try:
-            self._inicio_archivo()
+            if acciones['scroll']:
+                self._inicio_archivo()
             self._esperar(random.uniform(0.2, 0.5))
             centro = self._configurar_area_mouse(self._rectangulo_ventana_editor())
-            self._move_to(*centro, duration=random.uniform(0.2, 0.6))
-            self._click()
+            if acciones['mover_mouse']:
+                self._move_to(*centro, duration=random.uniform(0.2, 0.6))
+            if acciones['click'] and self._mouse_en_area_segura():
+                self._click()
             self._esperar(random.uniform(0.2, 0.5))
         except pyautogui.FailSafeException:
             raise
@@ -330,26 +363,26 @@ class EditorInteractor(BaseAutomation):
             raise EditorNoDisponible("No se pudo confirmar un área segura para el mouse") from e
 
     def _movimiento_fase_mouse(self) -> None:
-        """Movimiento individual de la fase: scroll abajo/arriba (mayormente) y pequeños movimientos"""
+        """Elige una acción habilitada sin mover el cursor implícitamente."""
+        acciones = acciones_config({'fases': self.fases, 'acciones_editor': self.acciones}, 'editor')
         centro = self._configurar_area_mouse(self._rectangulo_ventana_editor())
-        x_actual, y_actual = self._posicion_mouse()
-        izquierda, arriba, derecha, abajo = self._area_mouse
-        if not (izquierda <= x_actual <= derecha and arriba <= y_actual <= abajo):
-            self._move_to(*centro, duration=0.3)
-        r = random.random()
-        if r < 0.1:
-            self._inicio_archivo()
-            self._esperar(0.1)
-        elif r < 0.7:
-            self._scroll(-random.randint(4, 12))
-        elif r < 0.85:
-            self._scroll(random.randint(3, 8))
+        if not self._mouse_en_area_segura():
+            if acciones['mover_mouse']:
+                self._move_to(*centro, duration=0.3)
+            else:
+                return
+        opciones = [clave for clave in ('click', 'scroll', 'mover_mouse') if acciones[clave]]
+        if not opciones:
+            return
+        accion = random.choice(opciones)
+        if accion == 'click':
+            self._click()
+        elif accion == 'scroll':
+            self._scroll(random.choice((-1, 1)) * random.randint(3, 12))
         else:
             x = random.randint(-self.EDITOR_WINDOW_OFFSET, self.EDITOR_WINDOW_OFFSET)
             y = random.randint(-self.EDITOR_WINDOW_OFFSET, self.EDITOR_WINDOW_OFFSET)
             self._move_rel(x, y, duration=random.uniform(0.2, 0.6))
-            if random.random() < 0.5:
-                self._click()
 
     def _rectangulo_ventana_editor(self):
         """Devuelve (x, y, ancho, alto) de la ventana del editor o None si no se puede obtener"""
@@ -392,6 +425,10 @@ class EditorInteractor(BaseAutomation):
 
         try:
             self._asegurar_destino()
+            if self.editor_actual:
+                self._ventana_escritura_editor = self.identidad_ventana_activa()
+                if self._ventana_escritura_editor is None:
+                    raise EditorNoDisponible('No se pudo identificar la ventana de escritura')
             self._cerrar_paneles()
 
             if self.bloque_actual is None or self.indice_linea >= len(self.bloque_actual):
@@ -412,6 +449,8 @@ class EditorInteractor(BaseAutomation):
         except Exception as e:
             # No reiniciar la inyección completa si se pierde el estado de una edición.
             raise EditorNoDisponible("Se interrumpió la edición del fragmento; no se reemplazará el archivo completo") from e
+        finally:
+            self._ventana_escritura_editor = None
 
     def _escribir_siguiente_linea(self, tiempo_final: float) -> None:
         """Escribe la línea en curso; si quedó a medias, continúa desde donde se interrumpió"""
@@ -434,11 +473,18 @@ class EditorInteractor(BaseAutomation):
             self._fin_linea()
             self._esperar(random.uniform(0.05, 0.15))
 
+        if self.desplazamiento:
+            logging.info("Reanudando línea pendiente: %s", json.dumps({
+                "linea": self.inicio_bloque + self.indice_linea + 1,
+                "caracteres_escritos": self.desplazamiento,
+                "caracteres_totales": len(linea),
+            }))
         texto = linea[self.desplazamiento:]
         for c in texto:
             if not self._queda_tiempo_editor(tiempo_final):
                 if self.desplazamiento:
                     self._guardar_linea_actual_mac()
+                    self.necesita_reposicionar = True
                 else:
                     self._press('left')
                     self.necesita_reposicionar = True
@@ -448,7 +494,7 @@ class EditorInteractor(BaseAutomation):
             self._lineas_observadas[self.inicio_bloque + self.indice_linea + 1] = linea[:self.desplazamiento]
             self._esperar(random.uniform(0.03, 0.08))
 
-        # Cada carácter ya se pega literalmente; un segundo reemplazo puede
+        # Cada carácter ya se escribió; un segundo reemplazo puede
         # seleccionar el salto de línea y unir accidentalmente la línea siguiente.
         self._guardar_linea_actual_mac()
         self.indice_linea += 1
@@ -456,10 +502,7 @@ class EditorInteractor(BaseAutomation):
         self.necesita_reposicionar = True
 
     def _insertar_caracter(self, caracter):
-        # Pegar un carácter evita que el editor añada cierres o cambie la sangría.
-        if not self.copiar_al_portapapeles(caracter):
-            raise EditorNoDisponible("No se pudo preparar el carácter de la línea")
-        self._hotkey(self.cmd_key, 'v')
+        self._write(caracter)
 
     def _max_bloque_segun_tamano(self) -> int:
         """Tamaño máximo del bloque según el tamaño del archivo para no borrarlo entero"""
@@ -500,7 +543,7 @@ class EditorInteractor(BaseAutomation):
         return 0, []
 
     def _linea_escribible(self, linea: str) -> bool:
-        """Indica si la línea puede reescribirse con pyautogui (solo ASCII imprimible, sin tabulaciones)"""
+        """Limita la reescritura a ASCII imprimible, sin tabulaciones."""
         return bool(linea.strip()) and all(0x20 <= ord(c) <= 0x7E for c in linea)
 
     def _limpiar_linea_actual(self) -> None:
@@ -538,7 +581,18 @@ class EditorInteractor(BaseAutomation):
         self._esperar(0.1)
 
     def _ir_a_linea(self, numero: int) -> None:
-        """Confirma el contenido de Ir a línea antes de enviar coordenadas."""
+        """Navega al archivo controlado y confirma la línea antes de editarla."""
+        if self.is_mac and self.directorio_trabajo:
+            cmd = self._comando_abrir_editor(self.editor_actual, self.ruta_archivo)
+            if not cmd:
+                raise EditorNoDisponible('No se pudo preparar la navegación al archivo temporal')
+            cmd.insert(1, '--goto')
+            cmd[-1] = f'{self.ruta_archivo}:{numero}:1'
+            if not self.ejecutar_comando(cmd):
+                raise EditorNoDisponible('No se pudo navegar a la línea del archivo temporal')
+            self._esperar(0.2)
+            self._confirmar_linea_mac(numero)
+            return
         if self.is_mac:
             self._hotkey("option", "g")
         else:

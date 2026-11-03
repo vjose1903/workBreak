@@ -8,10 +8,12 @@ import os
 from pathlib import Path
 import queue
 import signal
+import sys
 import time
 from collections import deque
 
-from menu import _dict_a_config, _registro_valido
+from editor_catalog import editores_instalados
+from menu import _dict_a_config, _registro_valido, validar_acciones_ejecucion
 from user_activity import DetencionSolicitada
 
 
@@ -39,8 +41,11 @@ class RegistroInterfaz(logging.Handler):
         self.setFormatter(logging.Formatter('%(asctime)s — %(levelname)s — %(message)s'))
 
     def emit(self, registro):
+        mensaje = self.format(registro)
+        if len(mensaje) > 768:
+            mensaje = mensaje[:768] + '… (ver registro completo)'
         _publicar(self.eventos, {
-            'tipo': 'registro', 'mensaje': self.format(registro),
+            'tipo': 'registro', 'mensaje': mensaje,
             'error': registro.levelno >= logging.ERROR,
         })
 
@@ -50,7 +55,13 @@ def ejecutar_proceso_bot(registro, detener, eventos, ruta_log, pid_interfaz):
     # Ctrl+C lo gestiona la interfaz, que solicita la limpieza mediante el evento.
     signal.signal(signal.SIGINT, signal.SIG_IGN)
     raiz = logging.getLogger()
-    archivo = RotatingFileHandler(ruta_log, maxBytes=2_000_000, backupCount=2, encoding='utf-8')
+    try:
+        archivo = RotatingFileHandler(ruta_log, maxBytes=2_000_000, backupCount=2, encoding='utf-8')
+    except OSError as error:
+        _publicar(eventos, {'tipo': 'registro', 'error': True,
+                           'mensaje': 'No se pudo abrir el registro: ' + json.dumps({'error': str(error)})})
+        _publicar(eventos, {'tipo': 'finalizado', 'codigo': 1, 'estadisticas': {}})
+        raise SystemExit(1) from error
     archivo.setFormatter(logging.Formatter('%(asctime)s — %(levelname)s — %(message)s'))
     consola = logging.StreamHandler()
     consola.setFormatter(archivo.formatter)
@@ -81,7 +92,7 @@ def ejecutar_proceso_bot(registro, detener, eventos, ruta_log, pid_interfaz):
             return
         informar('iniciando')
         config = _dict_a_config(registro, comprobar_cancelacion=comprobar_cancelacion)
-        if config.modo != 'web' and registro.get('fuente_tipo') == 'directorio' and not hasattr(config.fuente, 'directorio'):
+        if config.modo != 'web' and config.acciones_editor['escribir'] and registro.get('fuente_tipo') == 'directorio' and not hasattr(config.fuente, 'directorio'):
             raise ValueError('No se pudo cargar el directorio elegido. Selecciona otro directorio.')
         if cancelado():
             codigo = 0
@@ -125,6 +136,7 @@ class ControladorBot:
         self.inicio = None
         self.deteniendo = False
         self._resultado_recibido = False
+        self._canal_fallido = False
 
     @property
     def activo(self):
@@ -136,10 +148,9 @@ class ControladorBot:
             raise ValueError('Ya hay una sesión del bot en ejecución.')
         if not _registro_valido(registro):
             raise ValueError('La configuración no es válida.')
-        if registro.get('modo') == 'web' and (not registro.get('browser') or not any(p.strip() for p in registro.get('paginas', []))):
-            raise ValueError('Para usar solo navegador selecciona un navegador y al menos una web.')
-        if registro.get('modo') != 'editor' and registro.get('paginas') and not registro.get('browser'):
-            raise ValueError('Selecciona un navegador para utilizar las webs configuradas.')
+        editor_activo, _ = validar_acciones_ejecucion(registro)
+        if editor_activo and sys.platform == 'darwin' and registro.get('editor', 'vsCode') not in editores_instalados():
+            raise ValueError('Selecciona un editor compatible instalado en Configuración → Editor.')
         if self.proceso is not None:
             self.proceso.close()
             self.proceso = None
@@ -158,10 +169,16 @@ class ControladorBot:
         self.ultimo_error = ''
         self.deteniendo = False
         self._resultado_recibido = False
+        self._canal_fallido = False
         try:
             self.proceso.start()
         except Exception:
+            self.proceso.close()
             self.proceso = None
+            self.eventos.close()
+            self.eventos.join_thread()
+            self.eventos = None
+            self.detencion = None
             self.estado = {'estado': 'error'}
             raise
         self.inicio = time.monotonic()
@@ -174,10 +191,15 @@ class ControladorBot:
 
     def actualizar(self):
         if self.eventos is not None:
-            while True:
+            for _ in range(256):
                 try:
                     evento = self.eventos.get_nowait()
                 except queue.Empty:
+                    break
+                except (EOFError, OSError, ValueError) as error:
+                    self._canal_fallido = True
+                    self.ultimo_error = 'Falló la comunicación con el bot: ' + str(error)
+                    self.detener()
                     break
                 tipo = evento.get('tipo')
                 if tipo == 'registro':
@@ -194,7 +216,7 @@ class ControladorBot:
         if self.proceso is not None and not self.proceso.is_alive():
             self.proceso.join(timeout=0)
             if not self._resultado_recibido:
-                self.estado = {'estado': 'finalizado' if self.proceso.exitcode == 0 else 'error'}
+                self.estado = {'estado': 'finalizado' if self.proceso.exitcode == 0 and not self._canal_fallido else 'error'}
                 if self.proceso.exitcode and not self.ultimo_error:
                     self.ultimo_error = f'El proceso terminó con código {self.proceso.exitcode}.'
             self.deteniendo = False

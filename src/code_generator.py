@@ -87,7 +87,11 @@ class CodeGenerator:
 
     def generar_codigo(self, min_lineas: int = 45, max_lineas: int = 110) -> str:
         """Genera un bloque de código React/TypeScript realista con al menos `min_lineas` líneas."""
+        if (type(min_lineas) is not int or type(max_lineas) is not int
+                or not 0 < min_lineas <= max_lineas):
+            raise ValueError("El rango de líneas debe contener enteros positivos en orden")
         self._usados = set()
+        self._export_default_usado = False
         self._constantes_usadas = False
         bloques = [self._generar_modulo()]
         total = len(bloques[0])
@@ -116,9 +120,12 @@ class CodeGenerator:
     def _nombre_unico(self, lista: list) -> str:
         """Devuelve un nombre de la lista que no se haya usado ya en este archivo."""
         disponibles = [nombre for nombre in lista if nombre not in self._usados]
+        nombre = random.choice(disponibles or lista)
         if not disponibles:
-            disponibles = lista
-        nombre = random.choice(disponibles)
+            sufijo = 2
+            while f'{nombre}{sufijo}' in self._usados:
+                sufijo += 1
+            nombre = f'{nombre}{sufijo}'
         self._usados.add(nombre)
         return nombre
 
@@ -235,7 +242,9 @@ class CodeGenerator:
         lineas.append("  );")
         lineas.append("};")
         lineas.append("")
-        lineas.append(f"export default {nombre};")
+        if not self._export_default_usado:
+            lineas.append(f"export default {nombre};")
+            self._export_default_usado = True
         return lineas
 
     def _generar_bloque_extra(self) -> list:

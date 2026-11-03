@@ -17,28 +17,19 @@ from AppKit import (
     NSTextField, NSTextView, NSVariableStatusItemLength, NSWorkspace,
     NSButton, NSColor, NSStepper, NSSwitch, NSTableColumn, NSTableView, NSView,
 )
-from Foundation import NSObject, NSRunLoop, NSRunLoopCommonModes, NSTimer, NSURL
+from Foundation import NSObject, NSRunLoop, NSRunLoopCommonModes, NSTimer, NSURL, NSUserDefaults
 
+# Los Python enlazados con SDK antiguos requieren habilitarlo antes de crear NSApplication.
+NSUserDefaults.standardUserDefaults().registerDefaults_({'NSRequiresAquaSystemAppearance': False})
+
+from editor_catalog import editores_instalados
 from app_paths import recurso
 from app_version import VERSION, APP_ID
 from app_updates import Actualizador
 from app_preferences import cargar_preferencias, guardar_preferencias
 from mac_settings import VentanaConfiguracion
 from app_controller import ControladorBot
-from menu import Configuracion, FASES_EDITOR, MODOS_INTERACCION, NAVEGADORES_VALIDOS, formatear_tiempo, _config_a_dict, cargar_historial
-
-
-def normalizar_web(texto):
-    entrada = texto.strip()
-    url = entrada if '://' in entrada else 'https://' + entrada
-    try:
-        partes = urlsplit(url)
-        partes.port
-    except ValueError as error:
-        raise ValueError(f'Dirección web inválida: {entrada}') from error
-    if partes.scheme not in ('http', 'https') or not partes.hostname or any(c.isspace() for c in url):
-        raise ValueError(f'Dirección web inválida: {entrada}')
-    return url
+from menu import Configuracion, MODOS_INTERACCION, NAVEGADORES_VALIDOS, formatear_tiempo, _config_a_dict, cargar_historial, normalizar_web, ACCIONES_EDITOR, ACCIONES_WEB, acciones_config
 
 
 def normalizar_webs(texto):
@@ -126,7 +117,7 @@ class DialogoTiempo(NSObject):
         campo = notificacion.object()
         texto = campo.stringValue()
         control = self.controles[campo.tag()]
-        if texto.isdecimal() and int(texto) <= control.maxValue():
+        if texto.isdecimal() and len(texto) <= 4 and int(texto) <= control.maxValue():
             control.setIntegerValue_(int(texto))
 
     def cambiar_(self, sender):
@@ -141,7 +132,7 @@ class DialogoTiempo(NSObject):
         valores = []
         for campo, control in zip(self.campos, self.controles):
             texto = campo.stringValue().strip()
-            if not texto.isdecimal() or int(texto) > control.maxValue():
+            if not texto.isdecimal() or len(texto) > 4 or int(texto) > control.maxValue():
                 self.error.setStringValue_('Introduce horas válidas y minutos/segundos entre 00 y 59.')
                 return
             valores.append(int(texto))
@@ -325,11 +316,20 @@ class MenuWorkBreak(NSObject):
         self.actualizador = Actualizador()
         self.config = _config_a_dict(Configuracion())
         self.historial = []
+        historial = []
         if getattr(sys, 'frozen', False):
             historial = cargar_historial()
             if historial:
                 self.config.update(copy.deepcopy(historial[0]))
-        self.config.update(cargar_preferencias() or {})
+        # Normalizar cada fuente antes de mezclar para respetar las fases antiguas.
+        preferencias = cargar_preferencias()
+        self.config.update(preferencias or {})
+        origen = preferencias or (historial[0] if getattr(sys, 'frozen', False) and historial else {})
+        for entorno in ('editor', 'web'):
+            self.config['acciones_' + entorno] = acciones_config(origen, entorno)
+        instalados = editores_instalados()
+        if self.config.get('editor') not in instalados and instalados:
+            self.config['editor'] = next(iter(instalados))
         self.ventana_configuracion = None
         self.saliendo = False
         self._estaba_activo = False
@@ -341,17 +341,21 @@ class MenuWorkBreak(NSObject):
         self.preparar()
 
     def applicationShouldTerminate_(self, _aplicacion):
-        if self.controlador.activo or self.actualizador.consultando:
+        if self.controlador.activo or self.actualizador.consultando or self.actualizador.limpiando:
             self.actualizador.cancelar()
             self.solicitar_salida()
             return 0  # Cerrar después de que el bot termine su limpieza.
         self.actualizador.descartar()
+        if self.actualizador.limpiando:
+            self.solicitar_salida()
+            return 0
         return 1
 
     @objc.python_method
     def preparar(self):
         # Los diálogos necesitan el menú Edición para los atajos del responder nativo.
         aplicacion = NSApplication.sharedApplication()
+        aplicacion.setAppearance_(None)  # Heredar el tema del sistema, incluidos sus cambios en vivo.
         if aplicacion.mainMenu() is None:
             principal = NSMenu.alloc().initWithTitle_('WorkBreak')
             edicion = NSMenu.alloc().initWithTitle_('Edición')
@@ -425,20 +429,11 @@ class MenuWorkBreak(NSObject):
         for clave, titulo in MODOS_INTERACCION.items():
             self.item(modos, titulo, 'modo:' + clave, self.config.get('modo', 'ambos') == clave)
 
-        solo_editor = self.config.get('modo') == 'editor'
-        motivo_web = ' — Configurado solo editor' if solo_editor else ''
-        navegadores, item = self.submenu(menu, 'Navegador' + motivo_web)
-        self.config_web_items = [item]
+        editores, item = self.submenu(menu, 'Editor')
         self.config_items.append(item)
-        self.item(navegadores, 'Ninguno', 'browser:', self.config.get('browser') is None)
-        for navegador in NAVEGADORES_VALIDOS:
-            self.item(navegadores, navegador.capitalize(), 'browser:' + navegador,
-                      self.config.get('browser') == navegador)
-        item_webs = self.item(menu, f"Webs… ({len(self.config.get('paginas', []))})" + motivo_web, 'webs')
-        self.config_items.append(item_webs)
-        self.config_web_items.append(item_webs)
-
-        fuente, item = self.submenu(menu, 'Fuente de código')
+        self.config_editor_items.append(item)
+        acciones_editor, _ = self.submenu(editores, 'Acciones')
+        fuente, item = self.submenu(editores, 'Fuente de código')
         self.config_items.append(item)
         self.config_editor_items.append(item)
         real = self.config.get('fuente_tipo') == 'directorio'
@@ -448,14 +443,37 @@ class MenuWorkBreak(NSObject):
             ruta = self.config.get('directorio', '')
             self.item(fuente, Path(ruta).name, 'fuente:directorio', marcado=True).setToolTip_(ruta)
 
+        editores.addItem_(NSMenuItem.separatorItem())
+        instalados = editores_instalados()
+        for clave, titulo in instalados.items():
+            self.item(editores, titulo, 'editor:' + clave, self.config.get('editor') == clave)
+        if not instalados:
+            self.item(editores, 'Ningún editor compatible instalado')
+
+        solo_editor = self.config.get('modo') == 'editor'
+        motivo_web = ' — Configurado solo editor' if solo_editor else ''
+        navegadores, item = self.submenu(menu, 'Navegador' + motivo_web)
+        self.config_web_items = [item]
+        self.config_items.append(item)
+        acciones_web, _ = self.submenu(navegadores, 'Acciones')
+        item_webs = self.item(navegadores, f"Webs… ({len(self.config.get('paginas', []))})", 'webs')
+        self.config_items.append(item_webs)
+        self.config_web_items.append(item_webs)
+        navegadores.addItem_(NSMenuItem.separatorItem())
+        self.item(navegadores, 'Ninguno', 'browser:', self.config.get('browser') is None)
+        for navegador in NAVEGADORES_VALIDOS:
+            self.item(navegadores, navegador.capitalize(), 'browser:' + navegador,
+                      self.config.get('browser') == navegador)
+
         tiempo = self.config.get('tiempo')
         etiqueta = formatear_tiempo(tiempo)
         self.config_items.append(self.item(menu, f'Tiempo… ({etiqueta})', 'tiempo'))
-        fases, item = self.submenu(menu, 'Fases del editor')
-        self.config_items.append(item)
-        self.config_editor_items.append(item)
-        for clave, titulo in FASES_EDITOR.items():
-            self.item(fases, titulo, 'fase:' + clave, self.config.get('fases') == clave)
+        for entorno, acciones, opciones in (
+                ('editor', acciones_editor, ACCIONES_EDITOR),
+                ('web', acciones_web, ACCIONES_WEB)):
+            valores = acciones_config(self.config, entorno)
+            for clave, etiqueta in opciones.items():
+                self.item(acciones, etiqueta, f'accion:{entorno}:{clave}', valores[clave])
 
         recientes, item = self.submenu(menu, 'Configuraciones recientes')
         self.config_items.append(item)
@@ -466,7 +484,6 @@ class MenuWorkBreak(NSObject):
             tiempo = registro.get('tiempo')
             titulo = (f"{MODOS_INTERACCION[registro.get('modo', 'ambos')]} · "
                       f"{registro.get('browser') or 'Sin navegador'} · "
-                      f"{FASES_EDITOR.get(registro.get('fases'), FASES_EDITOR['ambas'])} · "
                       f"{formatear_tiempo(tiempo)}")
             self.item(recientes, titulo, f'historial:{indice}').setToolTip_(
                 registro.get('fuente_descripcion', '') + ' — ' + str(registro.get('fecha', '')))
@@ -492,6 +509,11 @@ class MenuWorkBreak(NSObject):
         activo = self.controlador.activo
         finalizo = self._estaba_activo and not activo
         self._estaba_activo = activo
+        bloqueada = bool(activo or self.saliendo or self.actualizador.consultando)
+        if getattr(self, '_config_bloqueada', None) != bloqueada:
+            self._config_bloqueada = bloqueada
+            if self.ventana_configuracion is not None:
+                self.ventana_configuracion.refrescar()
         if finalizo and not self.saliendo:
             self.construir_menu()
             return
@@ -505,8 +527,6 @@ class MenuWorkBreak(NSObject):
         self.estado_item.setTitle_(f'WorkBreak {VERSION} — ' + titulo)
         self.item_barra.button().setToolTip_('WorkBreak — ' + titulo)
         detalle = MODOS_INTERACCION[self.config.get('modo', 'ambos')]
-        if self.config.get('modo') != 'web':
-            detalle += ' · ' + FASES_EDITOR[self.config.get('fases', 'ambas')]
         if estado == 'pausado':
             datos = self.controlador.estado
             detalle = ('Esperando a que sueltes la tecla o el botón' if datos.get('pulsada')
@@ -523,11 +543,11 @@ class MenuWorkBreak(NSObject):
                                                and self.ventana_configuracion.ventana.isVisible()))
         self.detener_item.setEnabled_(activo and not self.controlador.deteniendo)
         for item in self.config_items:
-            item.setEnabled_(not activo and not self.saliendo)
+            item.setEnabled_(not activo and not self.saliendo and not self.actualizador.consultando)
         for item in self.config_web_items:
-            item.setEnabled_(not activo and not self.saliendo and self.config.get('modo') != 'editor')
+            item.setEnabled_(not activo and not self.saliendo and not self.actualizador.consultando and self.config.get('modo') != 'editor')
         for item in self.config_editor_items:
-            item.setEnabled_(not activo and not self.saliendo and self.config.get('modo') != 'web')
+            item.setEnabled_(not activo and not self.saliendo and not self.actualizador.consultando and self.config.get('modo') != 'web')
         self.actualizar_item.setEnabled_(not activo and not self.saliendo and not self.actualizador.consultando)
         self.actualizar_item.setTitle_(self.actualizador.texto_menu if self.actualizador.consultando else 'Buscar actualizaciones…')
         self.salir_item.setTitle_('Deteniendo antes de salir…' if self.saliendo else 'Salir de WorkBreak')
@@ -538,6 +558,9 @@ class MenuWorkBreak(NSObject):
                 self.mostrar_actualizacion(resultado)
         if self.saliendo and not activo and not self.actualizador.consultando:
             self.actualizador.descartar()
+            if self.actualizador.limpiando:
+                self.salir_item.setTitle_('Limpiando actualización antes de salir…')
+                return
             self.controlador.cerrar()
             if self.timer:
                 self.timer.invalidate()
@@ -652,10 +675,21 @@ class MenuWorkBreak(NSObject):
         config = copy.deepcopy(self.config) if compartida else config
         if comando.startswith('modo:'):
             config['modo'] = comando.split(':', 1)[1]
+        elif comando.startswith('editor:'):
+            editor = comando.split(':', 1)[1]
+            if editor not in editores_instalados():
+                raise ValueError('El editor seleccionado ya no está instalado o no es compatible.')
+            config['editor'] = editor
         elif comando.startswith('browser:'):
             config['browser'] = comando.split(':', 1)[1] or None
-        elif comando.startswith('fase:'):
-            config['fases'] = comando.split(':', 1)[1]
+        elif comando.startswith('accion:'):
+            _, entorno, clave = comando.split(':')
+            opciones = {'editor': ACCIONES_EDITOR, 'web': ACCIONES_WEB}
+            if entorno not in opciones or clave not in opciones[entorno]:
+                raise ValueError('Acción desconocida')
+            valores = acciones_config(config, entorno)
+            valores[clave] = not valores[clave]
+            config['acciones_' + entorno] = valores
         elif comando.startswith('historial:'):
             registro = copy.deepcopy(self.historial[int(comando.split(':', 1)[1])])
             config.clear()
@@ -697,6 +731,9 @@ class MenuWorkBreak(NSObject):
         if self.controlador.activo or self.actualizador.consultando or self.saliendo:
             raise ValueError('Detén el bot o espera a que termine la actualización antes de configurar.')
         nueva = copy.deepcopy(config)
+        instalados = editores_instalados()
+        if nueva.get('editor') not in instalados and instalados:
+            nueva['editor'] = next(iter(instalados))
         guardar_preferencias(nueva)
         self.config.clear()
         self.config.update(nueva)
@@ -726,6 +763,8 @@ class MenuWorkBreak(NSObject):
         scroll.setHasVerticalScroller_(True)
         texto = NSTextView.alloc().initWithFrame_(((0, 0), (440, 230)))
         texto.setEditable_(False)
+        texto.setTextColor_(NSColor.textColor())
+        texto.setBackgroundColor_(NSColor.textBackgroundColor())
         texto.setVerticallyResizable_(True)
         texto.setHorizontallyResizable_(False)
         texto.textContainer().setWidthTracksTextView_(True)

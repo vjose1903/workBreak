@@ -5,13 +5,13 @@ from pathlib import Path
 import sys
 import tempfile
 
-from app_paths import directorio_datos
+from app_paths import directorio_datos, leer_json, MAX_JSON_BYTES
 
 
 def cargar_preferencias():
     from menu import _registro_valido
     try:
-        datos = json.loads((directorio_datos() / 'preferences.json').read_text(encoding='utf-8'))
+        datos = leer_json(directorio_datos() / 'preferences.json')
         return datos if _registro_valido(datos) else None
     except (OSError, ValueError, TypeError):
         return None
@@ -21,13 +21,16 @@ def guardar_preferencias(config):
     from menu import _registro_valido
     if not _registro_valido(config):
         raise ValueError('La configuración contiene valores inválidos')
+    contenido = json.dumps(config, ensure_ascii=False, indent=2)
+    if len(contenido.encode('utf-8')) > MAX_JSON_BYTES:
+        raise ValueError('La configuración supera 2 MiB')
     destino = directorio_datos() / 'preferences.json'
     destino.parent.mkdir(parents=True, exist_ok=True)
     temporal = None
     try:
         with tempfile.NamedTemporaryFile(mode='w', encoding='utf-8', dir=destino.parent, delete=False) as archivo:
             temporal = Path(archivo.name)
-            json.dump(config, archivo, ensure_ascii=False, indent=2)
+            archivo.write(contenido)
             archivo.flush()
             os.fsync(archivo.fileno())
         os.replace(temporal, destino)

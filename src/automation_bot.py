@@ -8,8 +8,9 @@ import pyautogui
 
 from base_automation import FailsafeActivo, TiempoAgotado
 from editor_interactor import EditorInteractor, EditorNoDisponible
+from editor_catalog import EDITORES
 from menu import (Configuracion, configuracion_desde_args, guardar_configuracion,
-                  menu_interactivo, MODOS_INTERACCION)
+                  menu_interactivo, MODOS_INTERACCION, tiempo_valido, _config_a_dict, validar_acciones_ejecucion)
 from web_interactor import WebInteractor
 from statistics_tracker import StatisticsTracker
 from user_activity import MonitorActividad, PausaPorActividad, DetencionSolicitada
@@ -36,7 +37,7 @@ class AutomationBot:
             return None
         try:
             tiempo = int(value)
-            if tiempo <= 0:
+            if not tiempo_valido(tiempo):
                 raise argparse.ArgumentTypeError("El tiempo debe ser 'indefinido' o un número positivo")
             return tiempo
         except ValueError:
@@ -45,8 +46,7 @@ class AutomationBot:
     def configurar_parser(self):
         """Configura el parser de argumentos para la ejecución del bot"""
         parser = argparse.ArgumentParser(description="Bot para descansos en el trabajo")
-        # Compatibilidad con comandos anteriores; el editor siempre es VS Code.
-        parser.add_argument("-editor", choices=["vsCode"], help=argparse.SUPPRESS)
+        parser.add_argument("-editor", choices=list(EDITORES), help="Editor compatible a utilizar")
         parser.add_argument("-browser", type=self.web_interactor.validar_browser, required=False,
                             help=f"Navegador a usar: {', '.join(self.web_interactor.VALID_BROWSERS)}")
         parser.add_argument("-web", type=str, required=False,
@@ -74,18 +74,17 @@ class AutomationBot:
 
     def _gestionar_ejecucion(self, config: Configuracion) -> int:
         """Gestiona la ejecución del bot con resiliencia; devuelve el código de salida"""
-        if config.modo == "web" and (not config.browser or not any(p.strip() for p in config.paginas)):
-            raise ValueError("Para usar solo navegador selecciona un navegador y al menos una web.")
-        if config.modo != 'editor' and config.paginas and not config.browser:
-            raise ValueError('Selecciona un navegador para utilizar las webs configuradas.')
+        editor_activo, web_activa = validar_acciones_ejecucion(_config_a_dict(config))
         guardar_configuracion(config)
-        self._modo = config.modo
-        self._turno_actual = "web" if config.modo == "web" else "editor"
+        self._modo = config.modo if editor_activo and web_activa else ('editor' if editor_activo else 'web')
+        self._turno_actual = "web" if self._modo == "web" else "editor"
+        self.editor_interactor.acciones = dict(config.acciones_editor)
+        self.web_interactor.acciones = dict(config.acciones_web)
         self.editor_interactor.fases = config.fases
         if config.fuente:
             self.editor_interactor.fuente_codigo = config.fuente
 
-        paginas = list(config.paginas) if config.modo != "editor" else []
+        paginas = list(config.paginas) if web_activa else []
         self.web_interactor.set_paginas(paginas)
 
         if config.browser:

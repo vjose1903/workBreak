@@ -8,7 +8,7 @@ class MacKeyboard:
     """Eventos con modificadores explícitos, sin heredar Fn ni teclas anteriores."""
 
     KEY_CODES = {
-        'a': 0x00, 'g': 0x05, 'c': 0x08, 'v': 0x09, 'w': 0x0D, 't': 0x11,
+        'a': 0x00, 's': 0x01, 'g': 0x05, 'c': 0x08, 'v': 0x09, 'w': 0x0D, 't': 0x11,
         '1': 0x12, 'l': 0x25, 'enter': 0x24, 'return': 0x24, 'esc': 0x35,
         'left': 0x7B, 'right': 0x7C, 'down': 0x7D, 'up': 0x7E,
     }
@@ -20,6 +20,7 @@ class MacKeyboard:
         if self.antes_evento is not None:
             self.antes_evento()
         pyautogui.failSafeCheck()
+        eventos = []
         for pulsada in (True, False):
             evento = Quartz.CGEventCreateKeyboardEvent(None, codigo, pulsada)
             if evento is None:
@@ -28,7 +29,13 @@ class MacKeyboard:
             if texto is not None:
                 longitud = len(texto.encode('utf-16-le')) // 2
                 Quartz.CGEventKeyboardSetUnicodeString(evento, longitud, texto)
-            Quartz.CGEventPost(Quartz.kCGHIDEventTap, evento)
+            eventos.append(evento)
+        # El par se prepara completo y siempre libera la tecla antes de propagar una pausa/error.
+        try:
+            Quartz.CGEventPost(Quartz.kCGHIDEventTap, eventos[0])
+        finally:
+            Quartz.CGEventPost(Quartz.kCGHIDEventTap, eventos[1])
+
         time.sleep(pyautogui.DARWIN_CATCH_UP_TIME)
 
     def hotkey(self, *teclas):
