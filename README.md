@@ -6,6 +6,8 @@ Este bot permite interactuar automáticamente con un editor de código y un nave
 
 ## Requisitos
 
+Las fases de mouse detectan los monitores conectados y utilizan el área visible de la ventana del editor o navegador, aunque esté fuera del monitor principal. En macOS se utilizan coordenadas globales en puntos para admitir pantallas Retina y monitores a la izquierda o encima del principal. Si una ventana ocupa varias pantallas, se elige la mayor área de interacción continua dentro de una pantalla. La posición de las ventanas y las pantallas se vuelve a consultar durante la fase de mouse; no hace falta seleccionar un monitor en el menú.
+
 * Python 3.x
 * Pip (administrador de paquetes de Python)
 

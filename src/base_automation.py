@@ -145,10 +145,10 @@ class BaseAutomation:
         if self._area_mouse is not None:
             izquierda, arriba, derecha, abajo = self._area_mouse
             x, y = max(izquierda, min(x, derecha)), max(arriba, min(y, abajo))
-        if self.monitor_actividad is None:
+        if self.monitor_actividad is None and not self.is_mac:
             pyautogui.moveTo(x, y, duration=duration)
             return
-        inicio_x, inicio_y = pyautogui.position()
+        inicio_x, inicio_y = self._posicion_mouse()
         pasos = max(1, int(duration / 0.01))
         for paso in range(1, pasos + 1):
             self._antes_accion()
@@ -160,26 +160,54 @@ class BaseAutomation:
 
     def _move_rel(self, x, y, duration=0):
         self._antes_accion()
-        if self.monitor_actividad is None and self._area_mouse is None:
+        if self.monitor_actividad is None and self._area_mouse is None and not self.is_mac:
             pyautogui.moveRel(x, y, duration=duration)
         else:
-            actual_x, actual_y = pyautogui.position()
+            actual_x, actual_y = self._posicion_mouse()
             self._move_to(actual_x + x, actual_y + y, duration=duration)
 
     def _click(self):
         self._antes_accion()
         self._comprobar_area_mouse()
-        pyautogui.click()
+        if self.is_mac:
+            pyautogui.click(*self._posicion_mouse())
+        else:
+            pyautogui.click()
 
     def _scroll(self, cantidad):
         self._antes_accion()
         self._comprobar_area_mouse()
-        pyautogui.scroll(cantidad)
+        if self.is_mac:
+            pyautogui.scroll(cantidad, *self._posicion_mouse())
+        else:
+            pyautogui.scroll(cantidad)
+
+    def _posicion_mouse(self):
+        if self.is_mac:
+            import Quartz as q
+            punto = q.CGEventGetLocation(q.CGEventCreate(None))
+            return round(punto.x), round(punto.y)
+        return pyautogui.position()
+
+    def _monitores(self):
+        """Rectángulos globales en puntos, incluidos orígenes negativos y Retina."""
+        if self.is_mac:
+            import Quartz as q
+            error, pantallas, _ = q.CGGetActiveDisplayList(64, None, None)
+            if error:
+                raise RuntimeError('No se pudieron detectar los monitores')
+            return [(r.origin.x, r.origin.y, r.size.width, r.size.height)
+                    for r in (q.CGDisplayBounds(pantalla) for pantalla in pantallas)]
+        if self.is_windows:
+            import win32api
+            return [(x, y, derecha - x, abajo - y)
+                    for _, _, (x, y, derecha, abajo) in win32api.EnumDisplayMonitors()]
+        return [(0, 0, self.screen_width, self.screen_height)]
 
     def _comprobar_area_mouse(self):
         if self._area_mouse is None:
             raise RuntimeError("No hay un área segura confirmada para el mouse")
-        x, y = pyautogui.position()
+        x, y = self._posicion_mouse()
         izquierda, arriba, derecha, abajo = self._area_mouse
         if not (izquierda <= x <= derecha and arriba <= y <= abajo):
             raise RuntimeError("Mouse fuera del área segura; se cancela la interacción")
@@ -189,11 +217,17 @@ class BaseAutomation:
         if rectangulo is None:
             raise RuntimeError("No se pudo confirmar la ventana para mover el mouse")
         x, y, ancho, alto = rectangulo
-        izquierda, arriba = max(0, x + ancho // 3), max(0, y + 160)
-        derecha = min(self.screen_width - 1, x + ancho - 30)
-        abajo = min(self.screen_height - 1, y + alto - 60)
-        if derecha <= izquierda or abajo <= arriba:
+        areas = []
+        for mx, my, mw, mh in self._monitores():
+            izquierda, arriba = max(mx, x + ancho // 3), max(my, y + 160)
+            derecha = min(mx + mw - 1, x + ancho - 30)
+            abajo = min(my + mh - 1, y + alto - 60)
+            if derecha > izquierda and abajo > arriba:
+                areas.append((izquierda, arriba, derecha, abajo))
+        if not areas:
             raise RuntimeError("La ventana no tiene un área visible suficiente para el mouse")
+        izquierda, arriba, derecha, abajo = max(
+            areas, key=lambda r: (r[2] - r[0]) * (r[3] - r[1]))
         self._area_mouse = (izquierda, arriba, derecha, abajo)
         return ((izquierda + derecha) // 2, (arriba + abajo) // 2)
 

@@ -51,6 +51,12 @@ class AutomationSafetyTest(unittest.TestCase):
         self.web = WebInteractor(StatisticsTracker())
         # Nunca enviar eventos Quartz reales, aunque las pruebas se ejecuten en un Mac.
         for interactor in (self.editor, self.web):
+            posicion = patch.object(interactor, '_posicion_mouse', side_effect=teclado.position)
+            posicion.start()
+            self.addCleanup(posicion.stop)
+            monitores = patch.object(interactor, '_monitores', return_value=[(0, 0, 1920, 1080)])
+            monitores.start()
+            self.addCleanup(monitores.stop)
             interactor._mac_keyboard = SimpleNamespace(
                 hotkey=lambda *args, **kwargs: teclado.hotkey(*args, **kwargs),
                 press=lambda *args, **kwargs: teclado.press(*args, **kwargs),
@@ -808,6 +814,7 @@ class AutomationSafetyTest(unittest.TestCase):
         teclado.write.assert_not_called()
 
     def test_mouse_se_limita_al_area_segura_y_no_pulsa_fuera(self):
+        self.editor.is_mac = False
         self.editor._area_mouse = (100, 200, 500, 600)
         self.editor._move_to(2000, 0)
         teclado.moveTo.assert_called_once_with(500, 200, duration=0)
@@ -815,6 +822,55 @@ class AutomationSafetyTest(unittest.TestCase):
         with self.assertRaisesRegex(RuntimeError, 'fuera del área'):
             self.editor._click()
         teclado.click.assert_not_called()
+
+    def test_area_mouse_en_monitores_a_derecha_izquierda_y_arriba(self):
+        for monitor in [(1920, 0, 2560, 1440), (-1920, 0, 1920, 1080),
+                        (0, -1440, 2560, 1440)]:
+            with self.subTest(monitor=monitor), patch.object(
+                    self.editor, '_monitores', return_value=[(0, 0, 1920, 1080), monitor]):
+                x, y, ancho, alto = monitor
+                centro = self.editor._configurar_area_mouse((x + 50, y + 50, 1200, 900))
+                self.assertTrue(x <= centro[0] < x + ancho)
+                self.assertTrue(y <= centro[1] < y + alto)
+                self.assertEqual(self.editor._area_mouse,
+                                 (x + 450, y + 210, x + 1220, y + 890))
+
+    def test_ventana_entre_pantallas_elige_area_continua_y_evitar_huecos(self):
+        with patch.object(self.editor, '_monitores', return_value=[
+                (0, 0, 1920, 1080), (1920, -1080, 1920, 1080)]):
+            self.editor._configurar_area_mouse((1500, -500, 1800, 1400))
+            izquierda, arriba, derecha, abajo = self.editor._area_mouse
+            self.assertGreaterEqual(izquierda, 1920)
+            self.assertLess(abajo, 0)
+            with self.assertRaisesRegex(RuntimeError, 'visible suficiente'):
+                self.editor._configurar_area_mouse((-3000, 0, 1000, 800))
+            self.assertIsNone(self.editor._area_mouse)
+
+    def test_mac_usa_posicion_quartz_sin_conversion_retina(self):
+        from base_automation import BaseAutomation
+        quartz = SimpleNamespace(CGEventCreate=lambda _: 'evento',
+                                CGEventGetLocation=lambda _: SimpleNamespace(x=-800, y=-350))
+        self.editor.is_mac = True
+        with patch.dict(sys.modules, {'Quartz': quartz}):
+            self.assertEqual(BaseAutomation._posicion_mouse(self.editor), (-800, -350))
+
+    def test_mac_click_y_scroll_reciben_coordenadas_globales(self):
+        self.editor.is_mac = True
+        self.editor._area_mouse = (-1800, -900, -100, -100)
+        teclado.position.return_value = (-800, -350)
+        self.editor._click()
+        self.editor._scroll(4)
+        teclado.click.assert_called_once_with(-800, -350)
+        teclado.scroll.assert_called_once_with(4, -800, -350)
+
+    def test_movimiento_mac_interpolado_llega_a_monitor_negativo(self):
+        teclado.moveTo.reset_mock()
+        self.editor.is_mac = True
+        teclado.position.return_value = (800, 400)
+        self.editor._area_mouse = (-1800, -900, -100, -100)
+        self.editor._move_to(-800, -350, duration=0.03)
+        self.assertEqual(teclado.moveTo.call_count, 3)
+        teclado.moveTo.assert_called_with(-800, -350, _pause=False)
 
     def test_turnos_web_conservan_paginas_pendientes(self):
         self.web.set_paginas(['https://uno.example', 'https://dos.example', 'https://tres.example'])

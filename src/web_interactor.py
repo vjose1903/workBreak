@@ -219,6 +219,8 @@ class WebInteractor(BaseAutomation):
 
             while self._queda_tiempo(tiempo_final):
                 self._confirmar_destino_web()
+                center_x, center_y = self._configurar_area_mouse(
+                    self.rectangulo_aplicacion(config['mac']))
                 # Clicks aleatorios dentro del radio
                 x_offset = random.randint(-30, 30)
                 y_offset = random.randint(-30, 30)

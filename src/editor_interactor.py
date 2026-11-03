@@ -320,6 +320,11 @@ class EditorInteractor(BaseAutomation):
 
     def _movimiento_fase_mouse(self) -> None:
         """Movimiento individual de la fase: scroll abajo/arriba (mayormente) y pequeños movimientos"""
+        centro = self._configurar_area_mouse(self._rectangulo_ventana_editor())
+        x_actual, y_actual = self._posicion_mouse()
+        izquierda, arriba, derecha, abajo = self._area_mouse
+        if not (izquierda <= x_actual <= derecha and arriba <= y_actual <= abajo):
+            self._move_to(*centro, duration=0.3)
         r = random.random()
         if r < 0.1:
             self._inicio_archivo()
