@@ -31,14 +31,16 @@ WorkBreak simula escritura en **Visual Studio Code** y movimientos, clics y scro
 
 **Requisito: macOS 15 o posterior.** El instalador incluye Python y las dependencias; no necesitas instalarlos por separado.
 
-| Tu Mac | Arquitectura | Instalador de la versión 1.0.0 |
+| Tu Mac | Arquitectura | Última versión estable |
 | --- | --- | --- |
-| Apple Silicon · familia M1, M2, M3, M4 o M5 | `arm64` | [⬇ Descargar DMG para Apple Silicon](https://github.com/vjose1903/workBreak/releases/download/v1.0.0/WorkBreak-1.0.0-macos-arm64.dmg) |
-| Procesador Intel | `x86_64` | [⬇ Descargar DMG para Intel](https://github.com/vjose1903/workBreak/releases/download/v1.0.0/WorkBreak-1.0.0-macos-x86_64.dmg) |
+| Apple Silicon · familia M1, M2, M3, M4 o M5 | `arm64` | [⬇ Descargar DMG para Apple Silicon](https://github.com/vjose1903/workBreak/releases/latest/download/WorkBreak-macos-arm64.dmg) |
+| Procesador Intel | `x86_64` | [⬇ Descargar DMG para Intel](https://github.com/vjose1903/workBreak/releases/latest/download/WorkBreak-macos-x86_64.dmg) |
 
-> **Primera publicación pendiente:** todavía no hay una Release publicada. Los enlaces directos de la tabla corresponden a la versión `1.0.0` y funcionarán cuando el CI/CD publique sus instaladores. La compilación y el funcionamiento nativo en Apple Silicon siguen pendientes de validación en ARM.
+> **Disponibilidad:** los enlaces dinámicos requieren una Release estable publicada con los archivos de nombre fijo `WorkBreak-macos-arm64.dmg` y `WorkBreak-macos-x86_64.dmg`. El workflow los adjunta a las nuevas publicaciones. Hasta publicar una versión con este cambio, los enlaces pueden devolver 404. La ejecución nativa en Apple Silicon requiere además validación funcional en ARM.
 
-Para futuras versiones, consulta **[la última Release estable](https://github.com/vjose1903/workBreak/releases/latest)** o **[todas las versiones y sus cambios](https://github.com/vjose1903/workBreak/releases)**. Cada Release contiene DMG, PKG y sumas SHA-256, separados por arquitectura. Los enlaces de la tabla son de una versión concreta; no cambian de destino al publicarse una nueva.
+Los botones de la tabla descargan directamente el **DMG**, sin pasar por una descarga del código fuente. Cada DMG contiene su instalador `.pkg`. El workflow adjunta a la Release únicamente los DMG de Intel y Apple Silicon; los PKG separados y las sumas SHA-256 se conservan como artefactos de compilación en Actions.
+
+Los botones utilizan `/releases/latest/download/` y apuntan automáticamente a la **última Release estable**, sin editar el README con cada versión. También puedes consultar **[la última Release](https://github.com/vjose1903/workBreak/releases/latest)** o **[todas las versiones y sus cambios](https://github.com/vjose1903/workBreak/releases)**.
 
 **¿Cuál necesitas?** En el menú  → **Acerca de este Mac**, si aparece «Chip Apple M…», elige Apple Silicon. Si aparece «Procesador Intel», elige Intel.
 
@@ -262,11 +264,11 @@ Un tag **`vX.Y.Z`** activa [el workflow de publicación](.github/workflows/relea
 1. Verifica que el tag coincida exactamente con `VERSION` y prueba el script de publicación.
 2. Ejecuta las pruebas Python y compila por separado **Intel** y **Apple Silicon**.
 3. Comprueba los ejecutables y genera DMG, PKG y sumas SHA-256.
-4. Crea una Release en borrador con la descripción del tag y la publica cuando ambos instaladores están disponibles.
+4. Adjunta únicamente archivos DMG a una Release en borrador: los instaladores versionados y una copia de cada arquitectura con nombre fijo para los enlaces dinámicos. La publica cuando ambas arquitecturas están disponibles. El actualizador de la aplicación sigue utilizando los nombres versionados.
 
 Una reejecución puede completar un borrador, pero no sustituye archivos de una Release ya publicada. Cada corrección requiere una nueva versión y un nuevo tag. Los tags sin Release o sin instaladores no se ofrecen como actualizaciones instalables.
 
-Al publicar una nueva versión destacada, actualiza también los enlaces directos y la versión del código mostrados en este README. El enlace **Última Release estable** siempre permite consultar la publicación más reciente.
+Los enlaces de descarga no requieren cambios con cada versión. La insignia de versión del código puede actualizarse al preparar una nueva versión.
 
 Si se incorporan certificados de Apple, el build admite `WORKBREAK_CODESIGN_IDENTITY`, `WORKBREAK_INSTALLER_IDENTITY` y `WORKBREAK_NOTARY_PROFILE`. El workflow actual utiliza firma local; no incluye credenciales de distribución ni realiza notarización.
 

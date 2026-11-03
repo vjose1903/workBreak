@@ -79,11 +79,14 @@ jobs:
             echo "La Release ya está publicada; sus archivos no se reemplazan."
             exit 0
           fi
+          for arch in arm64 x86_64; do
+            cp "artifacts/WorkBreak-${RELEASE_TAG#v}-macos-${arch}.dmg" "artifacts/WorkBreak-macos-${arch}.dmg"
+          done
           notes="$RUNNER_TEMP/workbreak-release-notes.md"
           git for-each-ref --format='%(contents)' "refs/tags/$RELEASE_TAG" > "$notes"
           if [ "$existing" = "true" ]; then
-            gh release upload "$RELEASE_TAG" artifacts/* --clobber
+            gh release upload "$RELEASE_TAG" artifacts/*.dmg --clobber
           else
-            gh release create "$RELEASE_TAG" artifacts/* --draft --verify-tag --title "WorkBreak $RELEASE_TAG" --notes-file "$notes"
+            gh release create "$RELEASE_TAG" artifacts/*.dmg --draft --verify-tag --title "WorkBreak $RELEASE_TAG" --notes-file "$notes"
           fi
           gh release edit "$RELEASE_TAG" --title "WorkBreak $RELEASE_TAG" --notes-file "$notes" --draft=false
