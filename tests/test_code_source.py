@@ -7,6 +7,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src"))
 
 from code_generator import CodeGenerator
 from code_source import RealProjectSource
+from user_activity import DetencionSolicitada
 
 
 class RealProjectSourceTest(unittest.TestCase):
@@ -42,11 +43,30 @@ class RealProjectSourceTest(unittest.TestCase):
         self.assertNotIn("lib.tsx", nombres)
         self.assertNotIn("corto.tsx", nombres)
 
+    def test_la_interfaz_puede_cancelar_el_escaneo(self):
+        def cancelar():
+            raise DetencionSolicitada()
+        with self.assertRaises(DetencionSolicitada):
+            RealProjectSource(self.raiz, comprobar_cancelacion=cancelar)
+
     def test_obtener_codigo_devuelve_contenido_real(self):
         fuente = RealProjectSource(self.raiz)
         codigo = fuente.obtener_codigo()
         self.assertTrue(codigo.strip())
         self.assertIn("export", codigo)
+
+    def test_no_repite_archivos_consecutivos(self):
+        fuente = RealProjectSource(self.raiz)
+        anterior = fuente.obtener_codigo()
+        for _ in range(6):
+            actual = fuente.obtener_codigo()
+            self.assertNotEqual(actual, anterior)
+            anterior = actual
+
+    def test_directorio_con_un_archivo_sigue_funcionando(self):
+        fuente = RealProjectSource(self.raiz)
+        fuente.archivos = fuente.archivos[:1]
+        self.assertEqual(fuente.obtener_codigo(), fuente.obtener_codigo())
 
     def test_directorio_invalido_lanza_error(self):
         with self.assertRaises(ValueError):

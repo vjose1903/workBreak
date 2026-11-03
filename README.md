@@ -47,11 +47,25 @@ setup.bat
 
 ## Uso
 
-Ejecutar el script sin parámetros para que se muestre el **menú interactivo**:
+En **macOS**, ejecutar el script sin parámetros abre una **W en la barra de menús superior**:
 
 ```bash
 python src/main.py
 ```
+
+Haz clic en la **W** para configurar navegador, webs, fuente de código, tiempo, fases y configuraciones recientes. El bot no empieza hasta pulsar **Iniciar bot**. Mientras trabaja, las opciones de configuración quedan bloqueadas; **Detener bot**, **Estado y estadísticas**, **Ver registro** y **Salir de WorkBreak** permanecen disponibles.
+
+El menú muestra la fase actual, las pausas por actividad y su cuenta atrás. **Detener bot** interrumpe también el debounce. **Salir** solicita una detención ordenada y espera la limpieza antes de cerrar. Solo se admite una sesión por interfaz y una interfaz por checkout. El código real se escanea en el proceso del bot, para mantener disponible el menú durante la carga.
+
+La automatización se ejecuta en un proceso separado creado con `spawn`. La interfaz permanece en el hilo principal de AppKit. El registro se guarda en `~/Library/Logs/WorkBreak/workbreak.log`, con rotación. La configuración se sigue guardando en el historial existente al iniciar una sesión válida.
+
+Para utilizar el menú anterior en Terminal:
+
+```bash
+python src/main.py --terminal
+```
+
+En Windows el menú de terminal continúa siendo el predeterminado. Los parámetros CLI conservan su funcionamiento en ambos sistemas. Esta primera interfaz se ejecuta desde Python; todavía no es una aplicación `.app` independiente de Terminal. macOS requiere `pyobjc-framework-Cocoa`, declarado en `requirements-mac.txt`.
 
 El editor es siempre **Visual Studio Code**, sin selección adicional.
 
@@ -63,12 +77,13 @@ El menú permite configurar:
   * **Código React/TypeScript aleatorio** (por defecto).
   * **Directorio real** con código React/TS del proyecto monitoreado: el bot escanea el directorio (ignorando `node_modules`, `dist`, `build`, etc.), solo considera archivos de **más de 20 y menos de 400 líneas**, elige archivos reales y los pega en el editor, para que las capturas muestren el código real del proyecto.
 * Tiempo de ejecución en minutos (vacío o `0` = indefinido).
-* **Fases del editor** (opción 6): escritura y mouse (por defecto), solo escritura o solo mouse. La elección se muestra en el resumen y se conserva en el historial. Las configuraciones antiguas usan ambas fases.
+* **Interacción**: editor y navegador (por defecto), solo editor o solo navegador. El modo solo navegador exige un navegador y al menos una web, y no abre VS Code ni carga la fuente de código. Se conserva en el historial; también está disponible en la opción 9 del menú de terminal y mediante `--modo web`, `--modo editor` o `--modo ambos`.
+* **Fases del editor** (opción 6 del menú de terminal): escritura y mouse (por defecto), solo escritura o solo mouse. La elección se muestra en el resumen y se conserva en el historial. Las configuraciones antiguas usan ambas fases.
 * **Usar configuración previa**: carga una de las configuraciones de las últimas 5 sesiones (guardadas localmente en `config_history.json`). Se auto-selecciona la más reciente; también puedes elegir otra por número.
 
 El archivo `config_history.json` se crea automáticamente en la raíz del proyecto si no existe y conserva las últimas 5 configuraciones usadas.
 
-En los tres modos se pega inicialmente el código completo. En solo mouse se conserva ese contenido y se realizan movimientos y scroll sin reescribir fragmentos. En solo escritura se omiten las fases de mouse. Esta selección se aplica al editor; la navegación web conserva su configuración independiente. Para iniciar, usa la opción 7.
+En los tres modos se pega inicialmente el código completo. En solo mouse se conserva ese contenido y se realizan movimientos y scroll sin reescribir fragmentos. En solo escritura se omiten las fases de mouse. Esta selección se aplica al editor; la navegación web conserva su configuración independiente. Para iniciar, pulsa **Iniciar bot** en la W, o usa la opción 7 en el menú de terminal.
 
 ### Modo avanzado (parámetros CLI)
 
@@ -98,7 +113,7 @@ python src/main.py -browser chrome -web "https://google.com,https://chat.openai.
    Al completar cada bloque, el archivo queda exactamente igual al original para las capturas. Las fases de escritura y mouse tienen duraciones variables y distintas entre sí.
 3. Si se especifican URLs, abre el navegador y navega por ellas, realizando clics aleatorios dentro de una zona interior de la ventana. Si hay webs configuradas, las fases del editor y del navegador se **alternan en turnos acotados** (editor ~30-90s, navegador ~30-60s). El recorrido conserva las páginas pendientes entre turnos, aunque la lista no quepa en uno solo. Los movimientos del editor también se limitan a una zona interior; si no se puede confirmar una zona visible suficiente, se cancela la interacción.
 4. Regresa al editor y continúa la simulación en un bucle infinito o hasta que se haya alcanzado el tiempo especificado por el parámetro `-tiempo`.
-5. Al agotarse el tiempo indicado por `-tiempo`, no inicia nuevas páginas ni interacciones web. El cierre de la pestaña creada y la limpieza pueden terminar después del límite. Sin límite configurado, continúa hasta que el usuario lo detenga manualmente.
+5. Al agotarse el tiempo indicado por `-tiempo`, no inicia nuevas páginas ni interacciones web. La limpieza puede terminar después del límite. Las pestañas se conservan abiertas: el bot no envía un cierre a la pestaña activa sin poder demostrar que es la que creó. Esto también protege las pestañas o ventanas abiertas por enlaces durante una visita. Sin límite configurado, continúa hasta que el usuario lo detenga manualmente.
 
 ## Detener el bot
 
@@ -122,7 +137,7 @@ Para finalizar el script, presiona `CTRL + C` en la terminal.
 
 También puedes activar la parada de emergencia de PyAutoGUI llevando el mouse a una esquina de la pantalla principal. Al detectarla, el bot no envía teclas para cerrar pestañas; puede quedar abierta la pestaña de esa interacción.
 
-La parada de emergencia se comprueba también durante el debounce, aproximadamente una vez por segundo. El límite total se revisa antes de cada acción; al agotarse solo se permiten tareas de limpieza, siempre respetando la actividad del usuario. Las operaciones nativas del portapapeles tienen un máximo de cinco segundos y se interrumpen al detectar actividad. Se registran las copias pendientes y el contador nativo del portapapeles para conservar su procedencia al reanudar.
+La parada de emergencia se comprueba también durante el debounce, aproximadamente una vez por segundo. El límite total se revisa antes de cada acción; al agotarse solo se permiten tareas de limpieza, siempre respetando la actividad del usuario. Las operaciones nativas del portapapeles tienen un máximo de cinco segundos y se interrumpen al detectar actividad. Un error de lectura conserva el estado anterior y detiene el flujo, sin confundirlo con un portapapeles vacío. Si una copia quedó interrumpida antes de confirmar su contenido y no coincide con un valor conocido del bot, la ejecución se detiene sin sobrescribir el portapapeles actual ni el valor guardado. No se deduce la autoría mediante el contador de cambios.
 
 El historial descarta registros con tipos o valores inválidos. Los instaladores devuelven un error si falla pip. La demostración manual se ejecuta únicamente con `python test_pyautogui.py --mover-mouse`: mueve el puntero, sin hacer clic, escribir ni borrar contenido, y no se descubre como prueba automática.
 

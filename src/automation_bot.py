@@ -9,17 +9,25 @@ import pyautogui
 from base_automation import FailsafeActivo, TiempoAgotado
 from editor_interactor import EditorInteractor, EditorNoDisponible
 from menu import (Configuracion, configuracion_desde_args, guardar_configuracion,
-                  menu_interactivo)
+                  menu_interactivo, MODOS_INTERACCION)
 from web_interactor import WebInteractor
 from statistics_tracker import StatisticsTracker
-from user_activity import MonitorActividad, PausaPorActividad
+from user_activity import MonitorActividad, PausaPorActividad, DetencionSolicitada
 
 class AutomationBot:
-    def __init__(self):
+    def __init__(self, solicitar_detencion=None, informar_estado=None):
         self.stats_tracker = StatisticsTracker()
         self.editor_interactor = EditorInteractor(self.stats_tracker)
         self.web_interactor = WebInteractor(self.stats_tracker)
+        self._modo = "ambos"
         self._turno_actual = "editor"
+        self.solicitar_detencion = solicitar_detencion
+        self.informar_estado = informar_estado
+        self.editor_interactor.informar_estado = informar_estado
+
+    def _notificar_estado(self, estado, **datos):
+        if getattr(self, 'informar_estado', None):
+            self.informar_estado(estado, **datos)
 
     def validar_tiempo(self, value: str) -> Optional[int]:
         """Valida el tiempo proporcionado por el usuario (minutos positivos o 'indefinido')"""
@@ -44,6 +52,8 @@ class AutomationBot:
                             help="Lista de webs separadas por coma")
         parser.add_argument("-tiempo", type=self.validar_tiempo, default=None,
                             help="Tiempo total de ejecución en minutos (default: indefinido)")
+        parser.add_argument("--modo", choices=list(MODOS_INTERACCION), default="ambos",
+                            help="Interacción: ambos, editor o web")
         return parser
 
     def _tiempo_restante(self) -> float:
@@ -55,11 +65,15 @@ class AutomationBot:
 
     def gestionar_ejecucion(self, config: Configuracion) -> int:
         """Gestiona la ejecución del bot con resiliencia; devuelve el código de salida"""
+        if config.modo == "web" and (not config.browser or not any(p.strip() for p in config.paginas)):
+            raise ValueError("Para usar solo navegador selecciona un navegador y al menos una web.")
+        self._modo = config.modo
+        self._turno_actual = "web" if config.modo == "web" else "editor"
         self.editor_interactor.fases = config.fases
         if config.fuente:
             self.editor_interactor.fuente_codigo = config.fuente
 
-        paginas = list(config.paginas)
+        paginas = list(config.paginas) if config.modo != "editor" else []
         self.web_interactor.set_paginas(paginas)
 
         if config.browser:
@@ -73,7 +87,10 @@ class AutomationBot:
         codigo_salida = 0
         fallos_consecutivos = 0
         ultimo_log = time.monotonic()
-        monitor = MonitorActividad()
+        monitor = MonitorActividad(
+            solicitar_detencion=self.solicitar_detencion,
+            informar_pausa=lambda segundos, pulsada: self._notificar_estado(
+                'pausado', segundos=segundos, pulsada=pulsada))
         monitor.comprobar_emergencia = pyautogui.failSafeCheck
         self.editor_interactor.monitor_actividad = monitor
         self.web_interactor.monitor_actividad = monitor
@@ -83,8 +100,10 @@ class AutomationBot:
         reintentar_desde = 0
 
         try:
+            self._notificar_estado('iniciando')
             monitor.iniciar()
             self.editor_interactor.mantener_despierto_iniciar()
+            self._notificar_estado('ejecutando', fase=self._turno_actual)
             while self._tiempo_restante() > 0:
                 try:
                     self.editor_interactor._antes_accion()
@@ -114,6 +133,7 @@ class AutomationBot:
                         logging.info("Tiempo total agotado durante la pausa; finalizando bot")
                         break
                     logging.info("Diez segundos sin actividad del usuario; reanudando bot")
+                    self._notificar_estado('ejecutando', fase=self._turno_actual)
                     continue
                 except TiempoAgotado:
                     logging.info("Tiempo total agotado; finalizando bot")
@@ -147,6 +167,8 @@ class AutomationBot:
                     resto_str = f"{restante / 60:.1f} minutos" if restante != float("inf") else "indefinido"
                     logging.info(f"Bot activo; tiempo restante: {resto_str}")
                     ultimo_log = time.monotonic()
+        except DetencionSolicitada:
+            logging.info("Detención solicitada desde la interfaz; finalizando sesión")
         except TiempoAgotado:
             logging.info("Tiempo total agotado; finalizando bot")
         except (pyautogui.FailSafeException, FailsafeActivo):
@@ -159,6 +181,7 @@ class AutomationBot:
             logging.error(f"No se pudo continuar la ejecución: {e}")
             codigo_salida = 1
         finally:
+            monitor.permitir_limpieza = True
             self.editor_interactor._limpiando = True
             self.web_interactor._limpiando = True
             try:
@@ -193,6 +216,10 @@ class AutomationBot:
         turnos acotados para que ambas arranquen apenas su aplicación está abierta,
         en lugar de esperar a que termine toda la fase del editor.
         """
+        if self._modo == "web":
+            self._notificar_estado("ejecutando", fase="navegador")
+            self.web_interactor.interactuar_web(duracion_maxima=random.uniform(30, 60))
+            return
         if self._turno_actual == "editor":
             self.editor_interactor.asegurar_editor_abierto(editor)
             if paginas:
@@ -201,15 +228,16 @@ class AutomationBot:
             else:
                 self.editor_interactor.interactuar_editor()
         if paginas and self._turno_actual == "web":
+            self._notificar_estado('ejecutando', fase='navegador')
             self.web_interactor.interactuar_web(duracion_maxima=random.uniform(30, 60))
             self._turno_actual = "editor"
 
-    def ejecutar(self) -> int:
+    def ejecutar(self, argv=None) -> int:
         """Usa los argumentos proporcionados o muestra el menú interactivo."""
         parser = self.configurar_parser()
-        args = parser.parse_args()
+        args = parser.parse_args(argv)
 
-        if args.editor or args.browser or args.web is not None or args.tiempo is not None:
+        if argv or args.editor or args.browser or args.web is not None or args.tiempo is not None or args.modo != "ambos":
             config = configuracion_desde_args(args)
         else:
             config = menu_interactivo()

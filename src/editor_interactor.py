@@ -9,8 +9,9 @@ import tempfile
 import time
 from typing import Optional
 
-from base_automation import BaseAutomation, FailsafeActivo
+from base_automation import BaseAutomation, FailsafeActivo, PortapapelesNoDisponible
 from code_generator import CodeGenerator
+from code_source import RealProjectSource
 from statistics_tracker import StatisticsTracker
 
 
@@ -40,6 +41,8 @@ class EditorInteractor(BaseAutomation):
         self.desplazamiento = 0
         self.necesita_reposicionar = True
         self.ruta_archivo = None
+        self.informar_estado = None
+        self._fases_con_archivo = 0
         self.EDITOR_INFO = {
             "vsCode": {"proceso": "Code.exe", "mac": "Visual Studio Code"},
         }
@@ -258,6 +261,13 @@ class EditorInteractor(BaseAutomation):
 
     def fase_escritura(self, tiempo_final: float) -> None:
         """Fase de escritura con duración variable: borra y reescribe bloques reales de código"""
+        if not self._queda_tiempo_editor(tiempo_final):
+            return
+        if isinstance(self.fuente_codigo, RealProjectSource) and self._fases_con_archivo >= 3:
+            self.inyectar_codigo()
+        self._fases_con_archivo += 1
+        if self.informar_estado:
+            self.informar_estado('ejecutando', fase='escritura')
         duracion = self._duracion_fase_escritura()
         fin = min(time.monotonic() + duracion, tiempo_final)
         logging.info(f"Fase de escritura por {max(0.0, fin - time.monotonic()):.0f}s")
@@ -273,6 +283,8 @@ class EditorInteractor(BaseAutomation):
     def fase_mouse(self, tiempo_final: float) -> None:
         """Fase de mouse: sube al inicio del archivo, hace clic y scroll arriba/abajo para que las
         capturas muestren el código; al terminar vuelve a la línea donde continuará la escritura"""
+        if self.informar_estado:
+            self.informar_estado('ejecutando', fase='mouse')
         if not self._queda_tiempo_editor(tiempo_final):
             return
         duracion = self._duracion_fase_mouse()
@@ -343,10 +355,10 @@ class EditorInteractor(BaseAutomation):
     def _duracion_fase_escritura(self) -> float:
         """Duración aleatoria de la fase de escritura (corta, media, larga)"""
         return random.choice([
-            random.uniform(2, 6),
-            random.uniform(8, 15),
-            random.uniform(25, 45),
-            random.uniform(60, 100),
+            random.uniform(4, 8),
+            random.uniform(10, 20),
+            random.uniform(30, 55),
+            random.uniform(70, 115),
         ])
 
     def _duracion_fase_mouse(self) -> float:
@@ -596,8 +608,8 @@ class EditorInteractor(BaseAutomation):
             try:
                 self._portapapeles_original = self.leer_portapapeles()
                 logging.info("Portapapeles del usuario guardado")
-            except Exception as e:
-                logging.warning(f"No se pudo guardar el portapapeles original: {e}")
+            except PortapapelesNoDisponible as e:
+                raise EditorNoDisponible("No se pudo guardar el portapapeles original; se cancela la inyección") from e
 
         codigo = self.fuente_codigo.obtener_codigo()
 
@@ -611,6 +623,7 @@ class EditorInteractor(BaseAutomation):
         self._esperar(0.15)
         self._hotkey(self.cmd_key, 'v')
         self.lineas_actuales = codigo.splitlines()
+        self._fases_con_archivo = 0
         self._lineas_observadas.clear()
         self.bloque_actual = None
         self.inicio_bloque = 0
@@ -633,11 +646,14 @@ class EditorInteractor(BaseAutomation):
             logging.error(f"No se pudo restaurar el portapapeles: {e}")
 
     def conservar_portapapeles_usuario(self):
-        contenido = self.leer_portapapeles()
-        if self.portapapeles_es_del_bot(contenido):
-            self.portapapeles_bot['ultimo'] = contenido
-        else:
-            self._portapapeles_original = contenido
+        try:
+            contenido = self.leer_portapapeles()
+            if self.portapapeles_es_del_bot(contenido):
+                self.portapapeles_bot['ultimo'] = contenido
+            else:
+                self._portapapeles_original = contenido
+        except PortapapelesNoDisponible as e:
+            raise EditorNoDisponible(str(e)) from e
         self.portapapeles_bot.pop('copia_pendiente', None)
         self.portapapeles_bot.pop('escritura_pendiente', None)
 

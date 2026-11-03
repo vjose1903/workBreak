@@ -23,6 +23,10 @@ class TiempoAgotado(BaseException):
     """Finalización normal que no debe convertirse en un fallo de interacción."""
 
 
+class PortapapelesNoDisponible(RuntimeError):
+    """No se puede leer o atribuir con seguridad el contenido del portapapeles."""
+
+
 class BaseAutomation:
     def __init__(self):
         pyautogui.FAILSAFE = True
@@ -348,7 +352,7 @@ class BaseAutomation:
             return False
 
     def leer_portapapeles(self) -> str:
-        """Lee el portapapeles con fallback nativo; devuelve '' si no se puede"""
+        """Lee el portapapeles; un fallo nunca se representa como texto vacío."""
         self._antes_accion()
         try:
             if self.is_windows:
@@ -360,37 +364,17 @@ class BaseAutomation:
                 )
             else:
                 resultado = self._ejecutar_proceso(["pbpaste"], capture_output=True, text=True, timeout=5)
-            return resultado.stdout if resultado.returncode == 0 else ""
+            if resultado.returncode != 0:
+                raise PortapapelesNoDisponible("El sistema rechazó la lectura del portapapeles")
+            return resultado.stdout
         except pyautogui.FailSafeException:
             raise
         except Exception as e:
-            logging.error(f"Error leyendo el portapapeles (fallback): {e}")
-            return ""
-
-    def version_portapapeles(self):
-        """Contador nativo para distinguir una copia pendiente de otra del usuario."""
-        import ctypes as c
-        if self.is_windows:
-            return c.windll.user32.GetClipboardSequenceNumber()
-        if self.is_mac:
-            objc = c.CDLL('/usr/lib/libobjc.A.dylib')
-            # Cargar AppKit registra NSPasteboard; no requiere paquetes Python adicionales.
-            c.CDLL('/System/Library/Frameworks/AppKit.framework/AppKit')
-            objc.objc_getClass.argtypes = [c.c_char_p]
-            objc.objc_getClass.restype = c.c_void_p
-            objc.sel_registerName.argtypes = [c.c_char_p]
-            objc.sel_registerName.restype = c.c_void_p
-            direccion = c.cast(objc.objc_msgSend, c.c_void_p).value
-            enviar = c.CFUNCTYPE(c.c_void_p, c.c_void_p, c.c_void_p)(direccion)
-            tablero = enviar(objc.objc_getClass(b'NSPasteboard'), objc.sel_registerName(b'generalPasteboard'))
-            contador = c.CFUNCTYPE(c.c_long, c.c_void_p, c.c_void_p)(direccion)
-            return contador(tablero, objc.sel_registerName(b'changeCount'))
-        raise RuntimeError("No se puede identificar el portapapeles en este sistema")
+            raise PortapapelesNoDisponible("No se pudo leer el portapapeles; se conserva el estado anterior") from e
 
     def copiar_seleccion(self):
-        version = self.version_portapapeles()
         self._hotkey(self.cmd_key, 'c')
-        self.portapapeles_bot['copia_pendiente'] = version
+        self.portapapeles_bot['copia_pendiente'] = True
         self._esperar(0.15)
         contenido = self.leer_portapapeles()
         self.portapapeles_bot['ultimo'] = contenido
@@ -402,8 +386,10 @@ class BaseAutomation:
             return True
         if contenido == self.portapapeles_bot.get('escritura_pendiente'):
             return True
-        pendiente = self.portapapeles_bot.get('copia_pendiente')
-        return pendiente is not None and self.version_portapapeles() == pendiente + 1
+        if self.portapapeles_bot.get('copia_pendiente'):
+            raise PortapapelesNoDisponible(
+                "Copia interrumpida sin confirmar: no se sobrescribirá el portapapeles actual")
+        return False
 
     # ------------------------------------------------------------
     # Anti-reposo (caffeinate / SetThreadExecutionState)

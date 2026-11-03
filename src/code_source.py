@@ -21,11 +21,13 @@ class RealProjectSource:
     y menos de 400 líneas de código.
     """
 
-    def __init__(self, directorio):
+    def __init__(self, directorio, comprobar_cancelacion=None):
+        self.comprobar_cancelacion = comprobar_cancelacion
         self.directorio = Path(directorio).expanduser().resolve()
         if not self.directorio.is_dir():
             raise ValueError(f"No existe el directorio: {self.directorio}")
         self.archivos = self._escanear()
+        self._ultimo_archivo = None
         if not self.archivos:
             raise ValueError(
                 f"No se encontraron archivos React/TypeScript de 20 a 400 líneas en: {self.directorio}"
@@ -49,8 +51,12 @@ class RealProjectSource:
         """Escanea el directorio buscando archivos React/TS de 20 a 400 líneas."""
         componentes, otros = [], []
         for raiz, dirs, nombres in os.walk(self.directorio):
+            if self.comprobar_cancelacion:
+                self.comprobar_cancelacion()
             dirs[:] = [d for d in dirs if d not in DIRS_IGNORADOS]
             for nombre in nombres:
+                if self.comprobar_cancelacion:
+                    self.comprobar_cancelacion()
                 if not nombre.endswith(EXTENSIONES_REACT):
                     continue
                 ruta = Path(raiz) / nombre
@@ -66,8 +72,11 @@ class RealProjectSource:
 
     def obtener_codigo(self) -> str:
         """Devuelve el contenido completo de un archivo real elegido al azar."""
-        for _ in range(10):
-            archivo = random.choice(self.archivos)
+        candidatos = [archivo for archivo in self.archivos if archivo != self._ultimo_archivo]
+        if not candidatos:
+            candidatos = list(self.archivos)
+        random.shuffle(candidatos)
+        for archivo in candidatos:
             try:
                 contenido = archivo.read_text(encoding="utf-8", errors="replace")
             except Exception as e:
@@ -75,6 +84,7 @@ class RealProjectSource:
                 continue
 
             lineas = contenido.splitlines()
+            self._ultimo_archivo = archivo
             logging.info(f"Fuente real: {archivo} ({len(lineas)} líneas)")
             return "\n".join(lineas)
 

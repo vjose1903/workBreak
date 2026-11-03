@@ -5,10 +5,24 @@ from unittest.mock import MagicMock, patch
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'src'))
 
-from user_activity import MonitorActividad, PausaPorActividad
+from user_activity import MonitorActividad, PausaPorActividad, DetencionSolicitada
 
 
 class MonitorActividadTest(unittest.TestCase):
+    def test_detener_desde_interfaz_interrumpe_el_debounce_inmediatamente(self):
+        monitor = MonitorActividad(solicitar_detencion=lambda: True)
+        monitor.registrar()
+        with self.assertRaises(DetencionSolicitada):
+            monitor.esperar_inactividad()
+
+    def test_detencion_permite_limpieza_sin_ignorar_actividad_del_usuario(self):
+        monitor = MonitorActividad(solicitar_detencion=lambda: True)
+        monitor.permitir_limpieza = True
+        monitor.comprobar()
+        monitor.registrar()
+        with self.assertRaises(PausaPorActividad):
+            monitor.comprobar()
+
     def test_parada_emergencia_se_comprueba_durante_el_debounce(self):
         monitor = MonitorActividad()
         monitor.registrar()

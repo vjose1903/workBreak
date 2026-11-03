@@ -188,17 +188,9 @@ class WebInteractor(BaseAutomation):
             raise
         finally:
             if contexto['abierta'] and not interrumpido and not contexto['intervenida']:
-                self._limpiando = True
-                try:
-                    if self.activar_navegador():
-                        self._hotkey(self.cmd_key, 'w')
-                        self._contexto = None
-                        logging.info(f"Cerrando pestaña de: {pagina}")
-                except PausaPorActividad:
-                    contexto['intervenida'] = True
-                    raise
-                finally:
-                    self._limpiando = False
+                # La activación del navegador no confirma la pestaña creada por el bot.
+                self._contexto = None
+                logging.info("Visita finalizada; pestaña conservada al no poder confirmar su identidad")
 
     def interactuar_con_pagina(self, pagina, tiempo_turno=float("inf")):
         """Interactúa con una página abierta en el navegador"""

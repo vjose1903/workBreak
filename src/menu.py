@@ -10,6 +10,7 @@ from code_source import RealProjectSource
 
 NAVEGADORES_VALIDOS = ["chrome", "edge", "opera", "firefox"]
 NAVEGADOR_NINGUNO = {"ninguno", "none", "no", "0", ""}
+MODOS_INTERACCION = {"ambos": "Editor y navegador", "editor": "Solo editor", "web": "Solo navegador"}
 MAX_HISTORIAL = 5
 FASES_EDITOR = {
     "ambas": "Escritura y mouse",
@@ -30,8 +31,12 @@ class Configuracion:
     fuente_descripcion: str = "Código React/TS aleatorio"
     tiempo: Optional[int] = None
     fases: str = "ambas"
+    modo: str = "ambos"
+    directorio: Optional[str] = None
 
     def __post_init__(self):
+        if self.modo not in MODOS_INTERACCION:
+            raise ValueError("Modo de interacción inválido")
         if self.fuente is None:
             self.fuente = CodeGenerator()
         if self.fases not in FASES_EDITOR:
@@ -40,6 +45,7 @@ class Configuracion:
     def resumen(self) -> str:
         tiempo_str = f"{self.tiempo} min" if self.tiempo else "indefinido"
         return (
+            f"  Interacción   : {MODOS_INTERACCION[self.modo]}\n"
             f"  Editor        : {self.editor or 'NO DEFINIDO'}\n"
             f"  Navegador     : {self.browser or 'ninguno'}\n"
             f"  Webs          : {', '.join(self.paginas) if self.paginas else 'ninguna'}\n"
@@ -92,6 +98,7 @@ def _seleccionar_fuente(config: Configuracion) -> None:
     opcion = _preguntar("  Opción: ", {"1", "2"})
     if opcion == "1":
         config.fuente = CodeGenerator()
+        config.directorio = None
         config.fuente_descripcion = "Código React/TS aleatorio"
         return
 
@@ -147,7 +154,8 @@ def menu_interactivo() -> Optional[Configuracion]:
         print("  [6] Elegir fases del editor")
         print("  [7] INICIAR BOT")
         print("  [8] Salir")
-        opcion = _preguntar("  Opción: ", {"1", "2", "3", "4", "5", "6", "7", "8"})
+        print("  [9] Elegir interacción: editor, navegador o ambos")
+        opcion = _preguntar("  Opción: ", {"1", "2", "3", "4", "5", "6", "7", "8", "9"})
 
         if opcion == "1":
             _seleccionar_navegador(config)
@@ -165,31 +173,35 @@ def menu_interactivo() -> Optional[Configuracion]:
             return config
         elif opcion == "8":
             return None
+        elif opcion == "9":
+            config.modo = _preguntar("  Interacción (ambos/editor/web): ", set(MODOS_INTERACCION))
 
 
 def _config_a_dict(config: Configuracion) -> dict:
     """Convierte una configuración en un registro serializable para el historial."""
-    es_directorio = isinstance(config.fuente, RealProjectSource)
+    directorio = str(config.fuente.directorio) if isinstance(config.fuente, RealProjectSource) else config.directorio
+    es_directorio = directorio is not None
     return {
         "editor": config.editor,
         "browser": config.browser,
         "paginas": list(config.paginas),
         "fuente_tipo": "directorio" if es_directorio else "aleatorio",
         "fuente_descripcion": config.fuente_descripcion,
-        "directorio": str(config.fuente.directorio) if es_directorio else None,
+        "directorio": directorio,
         "tiempo": config.tiempo,
         "fases": config.fases,
+        "modo": config.modo,
         "fecha": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
     }
 
 
-def _dict_a_config(d: dict) -> Configuracion:
+def _dict_a_config(d: dict, comprobar_cancelacion=None) -> Configuracion:
     """Reconstruye una configuración a partir de un registro del historial."""
     if not _registro_valido(d):
         raise ValueError("Configuración del historial inválida")
-    if d.get("fuente_tipo") == "directorio" and d.get("directorio"):
+    if d.get("modo", "ambos") != "web" and d.get("fuente_tipo") == "directorio" and d.get("directorio"):
         try:
-            fuente = RealProjectSource(d["directorio"])
+            fuente = RealProjectSource(d["directorio"], comprobar_cancelacion=comprobar_cancelacion)
             descripcion = str(fuente)
         except ValueError as e:
             logging.warning(f"No se pudo restaurar el directorio real '{d['directorio']}': {e}")
@@ -206,6 +218,8 @@ def _dict_a_config(d: dict) -> Configuracion:
         fuente_descripcion=descripcion,
         tiempo=d.get("tiempo"),
         fases=d.get("fases", "ambas"),
+        modo=d.get("modo", "ambos"),
+        directorio=d.get("directorio") if d.get("modo") == "web" and d.get("fuente_tipo") == "directorio" else None,
     )
 
 
@@ -220,6 +234,7 @@ def _registro_valido(registro) -> bool:
         (browser is None or isinstance(browser, str) and browser in NAVEGADORES_VALIDOS)
         and isinstance(paginas, list) and all(isinstance(p, str) for p in paginas)
         and (tiempo is None or type(tiempo) is int and tiempo > 0)
+        and isinstance(registro.get("modo", "ambos"), str) and registro.get("modo", "ambos") in MODOS_INTERACCION
         and isinstance(fases, str) and fases in FASES_EDITOR
         and isinstance(registro.get('fuente_descripcion', ''), str)
         and (registro.get('directorio') is None or isinstance(registro['directorio'], str))
@@ -261,7 +276,7 @@ def guardar_configuracion(config: Configuracion) -> None:
     registros = cargar_historial()
     nuevo = _config_a_dict(config)
 
-    clave = {k: nuevo.get(k) for k in ("editor", "browser", "paginas", "fuente_tipo", "directorio", "tiempo", "fases")}
+    clave = {k: nuevo.get(k) for k in ("editor", "browser", "paginas", "fuente_tipo", "directorio", "tiempo", "fases", "modo")}
     if registros:
         clave_ultimo = {k: registros[0].get(k) for k in clave}
         if clave_ultimo == clave:
@@ -287,7 +302,8 @@ def _cargar_config_previa(config: Configuracion) -> bool:
         fuente = r.get("fuente_descripcion", "?")
         tiempo = f"{r.get('tiempo')} min" if r.get("tiempo") else "indefinido"
         fases = FASES_EDITOR.get(r.get("fases"), FASES_EDITOR["ambas"])
-        print(f"    [{i}] {editor} | {browser} | {webs} | {fuente} | {fases} | {tiempo} | {r.get('fecha', '')}")
+        modo = MODOS_INTERACCION[r.get('modo', 'ambos')]
+        print(f"    [{i}] {modo} | {editor} | {browser} | {webs} | {fuente} | {fases} | {tiempo} | {r.get('fecha', '')}")
 
     print("  (Enter = la más reciente)")
     opcion = _preguntar(
@@ -304,6 +320,8 @@ def _cargar_config_previa(config: Configuracion) -> bool:
     config.fuente_descripcion = previa.fuente_descripcion
     config.tiempo = previa.tiempo
     config.fases = previa.fases
+    config.modo = previa.modo
+    config.directorio = previa.directorio
     print("  Configuración previa cargada")
     return True
 
@@ -317,4 +335,5 @@ def configuracion_desde_args(args) -> Configuracion:
         fuente=CodeGenerator(),
         fuente_descripcion="Código React/TS aleatorio",
         tiempo=args.tiempo,
+        modo=getattr(args, "modo", "ambos"),
     )

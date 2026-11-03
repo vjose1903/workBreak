@@ -11,8 +11,12 @@ class PausaPorActividad(BaseException):
     pass
 
 
+class DetencionSolicitada(BaseException):
+    """Detiene la sesión desde la interfaz, incluso durante el debounce."""
+
+
 class MonitorActividad:
-    def __init__(self, debounce=10.0, margen_inicial=5.0):
+    def __init__(self, debounce=10.0, margen_inicial=5.0, solicitar_detencion=None, informar_pausa=None):
         self.debounce = debounce
         self.margen_inicial = margen_inicial
         self._detectar_desde = None
@@ -29,6 +33,13 @@ class MonitorActividad:
         self._pulsadas = set()
         self._esta_pulsada = None
         self.comprobar_emergencia = None
+        self.solicitar_detencion = solicitar_detencion
+        self.informar_pausa = informar_pausa
+        self.permitir_limpieza = False
+
+    def _comprobar_detencion(self):
+        if not self.permitir_limpieza and self.solicitar_detencion and self.solicitar_detencion():
+            raise DetencionSolicitada()
 
     def reconciliar_pulsadas(self):
         """Descarta liberaciones perdidas consultando el estado físico actual."""
@@ -60,6 +71,7 @@ class MonitorActividad:
             self._condicion.notify_all()
 
     def comprobar(self):
+        self._comprobar_detencion()
         with self._condicion:
             if self._error is not None:
                 raise RuntimeError(f"El monitor de actividad dejó de funcionar: {self._error}")
@@ -74,7 +86,7 @@ class MonitorActividad:
                 restante = fin - time.monotonic()
                 if restante <= 0:
                     return
-                self._condicion.wait(restante)
+                self._condicion.wait(min(restante, 0.1) if self.solicitar_detencion else restante)
 
     def esperar_inactividad(self, limite=None):
         """Reinicia el plazo con cada evento; respeta el límite global del bot."""
@@ -82,6 +94,7 @@ class MonitorActividad:
         ultimo_log = float('-inf')
         contador_informado = None
         while True:
+            self._comprobar_detencion()
             if self.comprobar_emergencia is not None:
                 self.comprobar_emergencia()
             self.reconciliar_pulsadas()
@@ -116,10 +129,12 @@ class MonitorActividad:
                     contador_informado = contador
                 if limite is not None:
                     restante = min(restante, limite - ahora)
-                espera = min(restante, 1)
+                espera = min(restante, 0.1 if self.solicitar_detencion else 1)
             # No bloquear el callback nativo mientras se escribe en la terminal.
             if mensaje:
                 logging.info(mensaje)
+                if self.informar_pausa:
+                    self.informar_pausa(contador, bool(self._pulsadas))
             with self._condicion:
                 if self._version == version:
                     self._condicion.wait(espera)
@@ -129,7 +144,14 @@ class MonitorActividad:
         self._detectar_desde = float('inf')
         self._hilo = threading.Thread(target=self._escuchar, daemon=True, name="actividad-usuario")
         self._hilo.start()
-        if not self._listo.wait(5):
+        fin = time.monotonic() + 5
+        listo = self._listo.wait(0.1)
+        while not listo:
+            self._comprobar_detencion()
+            if time.monotonic() >= fin:
+                break
+            listo = self._listo.wait(0.1)
+        if not listo:
             self.detener()
             raise RuntimeError("No se pudo iniciar el monitor de teclado y mouse")
         if self._error is not None:
