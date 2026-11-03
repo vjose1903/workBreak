@@ -79,23 +79,51 @@ Las siguientes son **capturas reales de la interfaz del proyecto**, con direccio
 ### El menú de WorkBreak
 
 <p align="center">
-  <img src="docs/images/menu.png" alt="Menú de WorkBreak: interacción, navegador, webs, fuente, tiempo, fases y controles de ejecución" width="340" />
+  <img src="docs/images/menu.png" alt="Menú de WorkBreak con acceso a Configuración, controles de ejecución, estadísticas y actualizaciones" width="340" />
 </p>
 
 | Opción | Qué puedes configurar |
 | --- | --- |
 | **Interacción** | Editor y navegador, solo editor o solo navegador. |
-| **Navegador** | Chrome, Edge, Opera, Firefox o ninguno. |
-| **Webs…** | Una lista de direcciones identificadas por nombre. |
-| **Fuente de código** | Código React/TypeScript aleatorio o archivos de un directorio real. |
-| **Tiempo…** | Horas, minutos y segundos, o una ejecución indefinida. |
-| **Fases del editor** | Escritura y mouse, solo escritura o solo mouse. |
-| **Configuraciones recientes** | Recuperar una de las últimas cinco configuraciones utilizadas. |
+| **Navegador y Webs…** | Navegador y direcciones identificadas por nombre. |
+| **Fuente de código** | Código aleatorio o archivos de un directorio real. |
+| **Tiempo… y Fases del editor** | Duración y fases de escritura o mouse. |
+| **Configuraciones recientes** | Recuperar una de las últimas configuraciones utilizadas. |
+| **Configuración…** | Abre la ventana con todas las opciones organizadas por pestañas. |
 | **Estado y estadísticas…** | Consultar el estado y los tiempos registrados. |
 | **Ver registro…** | Abrir el registro para revisar el funcionamiento o un error. |
 | **Buscar actualizaciones…** | Consultar la última versión estable compatible con tu arquitectura. |
 
 Durante la ejecución se bloquean las opciones de configuración. Puedes consultar el estado, abrir el registro, detener el bot o solicitar la salida; la aplicación espera la limpieza antes de cerrarse.
+
+### ⚙️ Ventana de configuración
+
+<p align="center">
+  <img src="docs/images/configuracion-general.png" alt="Configuración general con el ajuste para abrir WorkBreak al iniciar sesión" width="740" />
+</p>
+
+| Pestaña | Opciones |
+| --- | --- |
+| **General** | Abrir WorkBreak al iniciar sesión y consultar la versión instalada. |
+| **Actividad** | Interacción (editor, navegador o ambos), fases, tiempo y configuraciones recientes. |
+| **Editor** | Fuente de código aleatorio o directorio de un proyecto. |
+| **Navegador** | Navegador y administración de webs con nombre y dirección. |
+
+<p align="center">
+  <img src="docs/images/configuracion-actividad.png" alt="Pestaña Actividad con modo de interacción, fases, duración y configuraciones recientes" width="740" />
+</p>
+
+El menú de la barra y la ventana utilizan **la misma configuración**. Los cambios se guardan automáticamente, aunque no inicies el bot: al cambiar un valor en el menú se actualiza la ventana abierta, y al cambiarlo en una pestaña se actualizan los valores y las marcas del menú. **Cerrar** conserva los cambios. Si falla el guardado, se mantiene la configuración anterior en ambas vistas. No se puede iniciar la automatización mientras la ventana de configuración está abierta.
+
+<details>
+<summary>Ver las pestañas Editor y Navegador</summary>
+
+<img src="docs/images/configuracion-editor.png" alt="Pestaña Editor con fuente de código y elección de directorio" width="740" />
+<img src="docs/images/configuracion-navegador.png" alt="Pestaña Navegador con selección de navegador y administración de webs" width="740" />
+
+</details>
+
+El interruptor **Abrir WorkBreak al iniciar sesión** se aplica inmediatamente mediante el servicio nativo de macOS y refleja su estado real. Solo está disponible al ejecutar la aplicación instalada en **Aplicaciones**; no registra Python ni una copia temporal de `build/`. Si macOS exige aprobación, la ventana indica dónde autorizarla. Se abre únicamente la aplicación: **el bot no empieza automáticamente**. La activación y el próximo inicio de sesión requieren comprobación con una nueva distribución instalada.
 
 ### 🌐 Agregar y quitar webs
 
@@ -106,7 +134,7 @@ Durante la ejecución se bloquean las opciones de configuración. Puedes consult
 1. Escribe un **nombre** para identificar la web y su **dirección**. Ambos son obligatorios.
 2. Pulsa **Agregar** para incorporarla a la lista. Puedes pegar con **⌘V**.
 3. Para eliminar una entrada, selecciona su fila y pulsa **Quitar seleccionada**.
-4. Pulsa **Guardar** para aplicar los cambios o **Cancelar** para descartarlos.
+4. Pulsa **Guardar** para aplicar y conservar la lista en ambas vistas o **Cancelar** para descartar los cambios del diálogo.
 
 En **Solo editor**, las opciones Navegador y Webs se deshabilitan y muestran «Configurado solo editor». El modo **Solo navegador** requiere un navegador y al menos una web; no abre VS Code ni carga código.
 
@@ -129,7 +157,7 @@ Al activar **Tiempo indefinido**, los campos se restablecen a `00` y quedan desh
 El editor es siempre **Visual Studio Code**. WorkBreak abre un archivo temporal vacío; después coloca el código completo de la fuente seleccionada. Los archivos originales del directorio no se editan.
 
 - **Código aleatorio:** genera contenido React/TypeScript.
-- **Directorio real:** busca archivos `.tsx`, `.jsx`, `.ts` y `.js` de **20 a 400 líneas**, excluyendo carpetas como `node_modules`, `dist` y `build`. El directorio elegido aparece marcado en el menú. Cada tres fases de escritura intenta cargar otro archivo, evitando repetir el anterior cuando hay alternativas válidas.
+- **Directorio real:** busca archivos `.tsx`, `.jsx`, `.ts` y `.js` de **20 a 400 líneas**, excluyendo carpetas como `node_modules`, `dist` y `build`. La ruta elegida aparece en la pestaña Editor. Cada tres fases de escritura intenta cargar otro archivo, evitando repetir el anterior cuando hay alternativas válidas.
 
 | Fase | Comportamiento |
 | --- | --- |
@@ -159,22 +187,38 @@ La detección nativa reconoció cuatro monitores en el entorno de desarrollo. El
 - **Detener bot:** finaliza la sesión también durante una pausa. **Salir de WorkBreak** solicita la detención y espera la limpieza.
 - **Emergencia:** llevar el mouse a una esquina de la pantalla principal activa la parada de PyAutoGUI. Si ejecutas desde Terminal, también puedes usar **Ctrl+C**.
 
-El portapapeles se guarda y se restaura respetando cambios externos. Las estadísticas excluyen las esperas de reanudación. Solo se permite una sesión de automatización a la vez.
+El portapapeles se guarda y se restaura respetando cambios externos. Las estadísticas excluyen las esperas de reanudación. Solo se permite una sesión de automatización y una interfaz por usuario, incluso entre copias de la aplicación.
 
-Las pestañas del navegador pueden permanecer abiertas al terminar o después de una pausa. El bot evita cerrar una pestaña cuya identidad no puede confirmar; también comprueba la ventana y la dirección antes de interactuar.
+Las pestañas del navegador pueden permanecer abiertas al terminar o después de una pausa. El bot evita cerrar una pestaña cuya identidad no puede confirmar; también comprueba la ventana y la dirección antes de interactuar. Si un clic navega a otra dirección, finaliza esa visita sin detener todo el bot. En la fase de mouse del editor se confirma el foco antes de cada acción.
 
 ## 🔄 Actualizaciones
 
 1. Abre la W y selecciona **Buscar actualizaciones…** con el bot detenido.
-2. Si existe una Release estable más reciente para tu arquitectura, acepta la descarga.
-3. **Cierra WorkBreak** y abre el `.pkg` dentro del nuevo DMG.
-4. El instalador actualiza la aplicación en **Aplicaciones**. No tienes que borrar la versión anterior.
+2. Si existe una Release estable más reciente para tu arquitectura, pulsa **Descargar actualización**. El menú muestra el porcentaje y después la verificación del instalador.
+3. Cuando termine, pulsa **Instalar y reiniciar**. WorkBreak se cierra ordenadamente y solicita al instalador nativo actualizar la aplicación.
+4. Autoriza la instalación si macOS lo solicita. WorkBreak vuelve a abrirse desde **Aplicaciones**, sin abrir el DMG ni ejecutar el PKG manualmente.
 
-El instalador rechaza la actualización mientras WorkBreak está abierto y comprueba la versión para evitar reemplazar una más reciente por otra antigua. La descarga requiere tu intervención y la instalación se realiza con el instalador nativo de macOS.
+<p align="center">
+  <img src="docs/images/actualizacion-disponible.png" alt="Aviso nativo de actualización disponible con Descargar actualización y Ahora no" width="310" />
+  <img src="docs/images/actualizacion-instalar.png" alt="Actualización preparada con Instalar y reiniciar y Ahora no" width="310" />
+</p>
+
+<p align="center">
+  <img src="docs/images/actualizacion-descargando.png" alt="Menú con el progreso de descarga y el inicio del bot deshabilitado" width="340" />
+</p>
+
+Las capturas muestran los diálogos reales con la versión **1.0.2 como ejemplo**; no anuncian una nueva Release publicada.
+
+La descarga verifica HTTPS, el tamaño y el SHA-256 publicado por GitHub. Antes de instalar se comprueban el identificador, la versión y el destino del paquete. Si la descarga está incompleta o no coincide, no se instala. Durante la descarga no se puede iniciar el bot; salir cancela la operación, incluidos los auxiliares de verificación. La limpieza se realiza en segundo plano; un volumen ocupado no bloquea el cierre y su ruta queda en el registro.
+
+La instalación automática requiere ejecutar la copia instalada en **Aplicaciones**. Un proceso auxiliar espera a que WorkBreak termine antes de pedir autorización de administrador y ejecutar el instalador nativo. Si cancelas la autorización o falla la instalación, muestra un aviso e intenta volver a abrir la aplicación existente. El registro del proceso se guarda en `~/Library/Logs/WorkBreak/update.log`. La configuración se conserva.
+
+**Transición desde 1.0.1:** esa versión todavía abre la descarga en el navegador. Debes instalar una vez la primera versión que incluya este actualizador; las actualizaciones siguientes podrán instalarse desde la aplicación. La instalación con autorización y reinicio completos queda pendiente de comprobación funcional con una nueva distribución instalada.
 
 | Datos | Ubicación de la aplicación instalada |
 | --- | --- |
 | Configuraciones recientes | `~/Library/Application Support/WorkBreak/config_history.json` |
+| Preferencias guardadas | `~/Library/Application Support/WorkBreak/preferences.json` |
 | Registro con rotación | `~/Library/Logs/WorkBreak/workbreak.log` |
 
 Estos datos están fuera de la aplicación y se conservan al actualizar. Al ejecutar desde el código fuente, el historial se guarda en `config_history.json` en la raíz del proyecto. La compilación local puede migrarlo una vez a Application Support si aún no existe; nunca se incluye en el DMG.
@@ -253,6 +297,8 @@ Después se encarga de la publicación completa: espera el workflow del tag y, s
 
 Si falla la compilación, el comando termina con error y muestra la ejecución que falló; no anuncia instaladores inexistentes ni borra el tag publicado. Mantén abierta la terminal hasta que termine el seguimiento.
 
+Para reanudar una publicación interrumpida, ejecuta nuevamente `node scripts/release.js` y elige **Actual**. El checkout debe estar limpio, `VERSION` debe coincidir con el tag y este debe apuntar al commit actual. El script vuelve a enviar el mismo tag si faltó el push y reintenta una ejecución fallida de Actions. Nunca mueve tags ni incluye cambios pendientes en una versión ya creada.
+
 Para simularlo sin modificar archivos, staging, commits ni tags:
 
 ```bash
@@ -297,3 +343,9 @@ Si se incorporan certificados de Apple, el build admite `WORKBREAK_CODESIGN_IDEN
 | No ofrece una actualización | Debe existir una Release estable más reciente con DMG para tu arquitectura. |
 
 Para investigar un problema, comparte la versión, arquitectura, modo de interacción y el fragmento pertinente del registro. Revisa antes si contiene rutas o direcciones privadas.
+
+### 🛡️ Protecciones de lectura y configuración
+
+Los archivos fuente deben ser archivos regulares de hasta **2 MiB**, con entre **20 y 400 líneas**. Se omiten tuberías y archivos demasiado grandes; el escaneo admite cancelación. Las direcciones individuales conservan comas válidas en sus parámetros, por ejemplo `https://example.com/?ids=1,2`.
+
+Las duraciones guardadas se validan antes de cargarse: de un segundo hasta **9999:59:59**, o tiempo indefinido. Se descartan configuraciones inválidas sin impedir el arranque.

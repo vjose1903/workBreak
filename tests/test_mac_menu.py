@@ -13,8 +13,14 @@ if sys.platform == 'darwin':
 class MenuMacTest(unittest.TestCase):
     def setUp(self):
         # Solo se ejercita configuración; no se crean iconos, ventanas ni procesos.
-        with patch('mac_menu.ControladorBot', return_value=MagicMock()):
+        with patch('mac_menu.ControladorBot', return_value=MagicMock()), \
+                patch('mac_menu.cargar_preferencias', return_value=None):
             self.menu = MenuWorkBreak.alloc().init()
+        self.menu.controlador.activo = False
+        self.menu.construir_menu = MagicMock()
+        guardar = patch('mac_menu.guardar_preferencias')
+        guardar.start()
+        self.addCleanup(guardar.stop)
 
     def test_webs_se_normalizan_y_se_eliminan_duplicados(self):
         self.assertEqual(normalizar_webs('example.com, https://example.com\nhttp://localhost:8000'),
@@ -67,3 +73,31 @@ class MenuMacTest(unittest.TestCase):
         self.assertEqual(_dict_a_config(registro).nombres_web, config.nombres_web)
         registro['nombres_web']['https://example.com'] = '   '
         self.assertFalse(_registro_valido(registro))
+
+    def test_instalar_actualizacion_entrega_auxiliar_antes_de_cerrar(self):
+        self.menu.actualizador = MagicMock()
+        with patch('mac_menu.NSAlert') as alerta, patch.object(self.menu, 'solicitar_salida') as salir:
+            alerta.alloc.return_value.init.return_value.runModal.return_value = 1000
+            self.menu.mostrar_actualizacion({'descargada': {'version': '1.2.3'}})
+        self.menu.actualizador.instalar.assert_called_once()
+        self.menu.actualizador.descartar.assert_not_called()
+        salir.assert_called_once()
+
+    def test_cancelar_instalacion_descarta_descarga_sin_cerrar(self):
+        self.menu.actualizador = MagicMock()
+        with patch('mac_menu.NSAlert') as alerta, patch.object(self.menu, 'solicitar_salida') as salir:
+            alerta.alloc.return_value.init.return_value.runModal.return_value = 1001
+            self.menu.mostrar_actualizacion({'descargada': {'version': '1.2.3'}})
+        self.menu.actualizador.instalar.assert_not_called()
+        self.menu.actualizador.descartar.assert_called_once()
+        salir.assert_not_called()
+
+    def test_fallo_del_auxiliar_no_cierra_la_aplicacion(self):
+        self.menu.actualizador = MagicMock()
+        self.menu.actualizador.instalar.side_effect = ValueError('No se pudo iniciar')
+        with patch('mac_menu.NSAlert') as alerta, patch.object(self.menu, 'solicitar_salida') as salir, \
+                patch.object(self.menu, 'aviso') as aviso:
+            alerta.alloc.return_value.init.return_value.runModal.return_value = 1000
+            self.menu.mostrar_actualizacion({'descargada': {'version': '1.2.3'}})
+        salir.assert_not_called()
+        aviso.assert_called_once()

@@ -1,5 +1,6 @@
 """Consulta Releases generadas desde los tags de GitHub, sin bloquear AppKit."""
 import json
+import logging
 import platform
 import queue
 import threading
@@ -8,6 +9,8 @@ from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
 
 from app_version import GITHUB_REPO, VERSION, version_numerica
+from app_update_install import (ActualizacionCancelada, preparar_descarga,
+                                limpiar_descarga, instalar_y_reiniciar)
 
 
 def interpretar_release(release, version_actual=VERSION, arquitectura=None):
@@ -27,7 +30,8 @@ def interpretar_release(release, version_actual=VERSION, arquitectura=None):
     esperado = f'https://github.com/{GITHUB_REPO}/releases/download/{version}/{nombre}'
     for asset in release.get('assets', []):
         if asset.get('name') == nombre and asset.get('browser_download_url') == esperado:
-            return {'version': numero, 'url': esperado}
+            return {'version': numero, 'url': esperado, 'bytes': asset.get('size'),
+                    'sha256': str(asset.get('digest', '')).removeprefix('sha256:')}
     raise ValueError('La nueva versión todavía no tiene un instalador para este Mac. Inténtalo más tarde.')
 
 
@@ -56,11 +60,16 @@ class Actualizador:
     def __init__(self):
         self.consultando = False
         self.resultados = queue.Queue()
+        self.texto_menu = 'Buscar actualizaciones…'
+        self.cancelacion = threading.Event()
+        self.preparada = None
+        self.entregada = False
 
     def buscar(self):
         if self.consultando:
             return
         self.consultando = True
+        self.texto_menu = 'Buscando actualizaciones…'
         threading.Thread(target=self._consultar, daemon=True, name='actualizaciones').start()
 
     def _consultar(self):
@@ -68,11 +77,57 @@ class Actualizador:
             self.resultados.put({'actualizacion': consultar_github()})
         except Exception as error:
             self.resultados.put({'error': str(error)})
+        finally:
+            self.consultando = False
+
+    def descargar(self, nueva):
+        if self.consultando:
+            return
+        self.descartar()
+        self.cancelacion.clear()
+        self.consultando = True
+        self.texto_menu = 'Descargando actualización… 0%'
+        threading.Thread(target=self._descargar, args=(nueva,), daemon=True,
+                         name='descarga-actualizacion').start()
+
+    def _descargar(self, nueva):
+        try:
+            self.preparada = preparar_descarga(nueva, self._progreso, self.cancelacion)
+            self.resultados.put({'descargada': self.preparada})
+        except ActualizacionCancelada:
+            self.resultados.put({'cancelada': True})
+        except Exception as error:
+            self.resultados.put({'error': str(error)})
+        finally:
+            self.consultando = False
+
+    def _progreso(self, texto):
+        self.texto_menu = texto
+
+    def cancelar(self):
+        self.cancelacion.set()
+
+    def descartar(self):
+        if self.preparada is not None and not self.entregada:
+            preparada = self.preparada
+            self.preparada = None
+            def limpiar():
+                try:
+                    limpiar_descarga(preparada)
+                except Exception as error:
+                    logging.warning('Descarga conservada para limpieza posterior: %s', json.dumps({
+                        'carpeta': preparada['carpeta'], 'error': str(error)}))
+            threading.Thread(target=limpiar, daemon=True, name='limpieza-actualizacion').start()
+
+    def instalar(self):
+        if self.preparada is None:
+            raise ValueError('No hay una actualización preparada')
+        instalar_y_reiniciar(self.preparada)
+        self.entregada = True
 
     def obtener_resultado(self):
         try:
             resultado = self.resultados.get_nowait()
         except queue.Empty:
             return None
-        self.consultando = False
         return resultado

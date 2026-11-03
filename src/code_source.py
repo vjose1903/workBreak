@@ -1,6 +1,7 @@
 import logging
 import os
 import random
+import stat
 from pathlib import Path
 
 EXTENSIONES_REACT = (".tsx", ".jsx", ".ts", ".js")
@@ -10,6 +11,7 @@ DIRS_IGNORADOS = {
 }
 MIN_LINEAS = 20
 MAX_LINEAS = 400
+MAX_BYTES = 2 * 1024 * 1024
 
 
 class RealProjectSource:
@@ -34,17 +36,29 @@ class RealProjectSource:
             )
         logging.info(f"RealProjectSource: {len(self.archivos)} archivos encontrados")
 
+    def _leer_lineas(self, ruta):
+        # O_NONBLOCK y fstat evitan bloquear si el archivo se sustituye por un FIFO.
+        descriptor = os.open(ruta, os.O_RDONLY | os.O_NONBLOCK)
+        with os.fdopen(descriptor, 'rb') as entrada:
+            info = os.fstat(entrada.fileno())
+            if not stat.S_ISREG(info.st_mode) or info.st_size > MAX_BYTES:
+                return []
+            datos = bytearray()
+            while len(datos) <= MAX_BYTES:
+                if self.comprobar_cancelacion:
+                    self.comprobar_cancelacion()
+                bloque = entrada.read(min(65536, MAX_BYTES + 1 - len(datos)))
+                if not bloque:
+                    break
+                datos.extend(bloque)
+            if len(datos) > MAX_BYTES:
+                return []
+            return datos.decode('utf-8', errors='replace').splitlines()
+
     def _contar_lineas(self, ruta) -> int:
-        """Cuenta las líneas del archivo; deja de contar al superar MAX_LINEAS."""
         try:
-            with open(ruta, encoding="utf-8", errors="replace") as f:
-                n = 0
-                for _ in f:
-                    n += 1
-                    if n > MAX_LINEAS:
-                        return n
-                return n
-        except Exception:
+            return len(self._leer_lineas(ruta))
+        except OSError:
             return -1
 
     def _escanear(self) -> list:
@@ -82,15 +96,8 @@ class RealProjectSource:
             if self.comprobar_cancelacion:
                 self.comprobar_cancelacion()
             try:
-                with archivo.open(encoding="utf-8", errors="replace") as entrada:
-                    lineas = []
-                    for linea in entrada:
-                        if self.comprobar_cancelacion:
-                            self.comprobar_cancelacion()
-                        lineas.append(linea.rstrip('\r\n'))
-                        if len(lineas) > MAX_LINEAS:
-                            break
-            except Exception as e:
+                lineas = self._leer_lineas(archivo)
+            except OSError as e:
                 logging.error(f"Error leyendo {archivo}: {e}")
                 continue
 

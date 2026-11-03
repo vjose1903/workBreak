@@ -1,4 +1,5 @@
 """Interfaz nativa de la barra de menús de macOS."""
+import os
 import copy
 import fcntl
 import hashlib
@@ -19,29 +20,29 @@ from AppKit import (
 from Foundation import NSObject, NSRunLoop, NSRunLoopCommonModes, NSTimer, NSURL
 
 from app_paths import recurso
-from app_version import VERSION
+from app_version import VERSION, APP_ID
 from app_updates import Actualizador
+from app_preferences import cargar_preferencias, guardar_preferencias
+from mac_settings import VentanaConfiguracion
 from app_controller import ControladorBot
 from menu import Configuracion, FASES_EDITOR, MODOS_INTERACCION, NAVEGADORES_VALIDOS, formatear_tiempo, _config_a_dict, cargar_historial
 
 
+def normalizar_web(texto):
+    entrada = texto.strip()
+    url = entrada if '://' in entrada else 'https://' + entrada
+    try:
+        partes = urlsplit(url)
+        partes.port
+    except ValueError as error:
+        raise ValueError(f'Dirección web inválida: {entrada}') from error
+    if partes.scheme not in ('http', 'https') or not partes.hostname or any(c.isspace() for c in url):
+        raise ValueError(f'Dirección web inválida: {entrada}')
+    return url
+
+
 def normalizar_webs(texto):
-    paginas = []
-    for entrada in texto.replace('\n', ',').split(','):
-        entrada = entrada.strip()
-        if not entrada:
-            continue
-        url = entrada if '://' in entrada else 'https://' + entrada
-        try:
-            partes = urlsplit(url)
-            partes.port  # Validar también puertos y direcciones IPv6 mal formadas.
-        except ValueError as error:
-            raise ValueError(f'Dirección web inválida: {entrada}') from error
-        if partes.scheme not in ('http', 'https') or not partes.hostname or any(c.isspace() for c in url):
-            raise ValueError(f'Dirección web inválida: {entrada}')
-        if url not in paginas:
-            paginas.append(url)
-    return paginas
+    return list(dict.fromkeys(normalizar_web(entrada) for entrada in texto.replace('\n', ',').split(',') if entrada.strip()))
 
 
 class DialogoTiempo(NSObject):
@@ -270,7 +271,7 @@ class DialogoWebs(NSObject):
             self.error.setStringValue_('Completa el nombre y la dirección web. Ambos son obligatorios.')
             return False
         try:
-            nuevas = normalizar_webs(texto)
+            nuevas = [normalizar_web(texto)]
         except ValueError as error:
             self.error.setStringValue_(str(error))
             return False
@@ -328,6 +329,8 @@ class MenuWorkBreak(NSObject):
             historial = cargar_historial()
             if historial:
                 self.config.update(copy.deepcopy(historial[0]))
+        self.config.update(cargar_preferencias() or {})
+        self.ventana_configuracion = None
         self.saliendo = False
         self._estaba_activo = False
         self.timer = None
@@ -338,10 +341,11 @@ class MenuWorkBreak(NSObject):
         self.preparar()
 
     def applicationShouldTerminate_(self, _aplicacion):
-        if self.controlador.activo:
-            self.saliendo = True
-            self.controlador.detener()
+        if self.controlador.activo or self.actualizador.consultando:
+            self.actualizador.cancelar()
+            self.solicitar_salida()
             return 0  # Cerrar después de que el bot termine su limpieza.
+        self.actualizador.descartar()
         return 1
 
     @objc.python_method
@@ -414,6 +418,7 @@ class MenuWorkBreak(NSObject):
         self.fase_item = self.item(menu, 'Listo para iniciar')
         menu.addItem_(NSMenuItem.separatorItem())
         self.config_items = []
+        self.config_editor_items = []
 
         modos, item = self.submenu(menu, 'Interacción')
         self.config_items.append(item)
@@ -435,6 +440,7 @@ class MenuWorkBreak(NSObject):
 
         fuente, item = self.submenu(menu, 'Fuente de código')
         self.config_items.append(item)
+        self.config_editor_items.append(item)
         real = self.config.get('fuente_tipo') == 'directorio'
         self.item(fuente, 'Código React/TypeScript aleatorio', 'fuente:aleatorio', not real)
         self.item(fuente, 'Elegir directorio…', 'fuente:directorio')
@@ -447,6 +453,7 @@ class MenuWorkBreak(NSObject):
         self.config_items.append(self.item(menu, f'Tiempo… ({etiqueta})', 'tiempo'))
         fases, item = self.submenu(menu, 'Fases del editor')
         self.config_items.append(item)
+        self.config_editor_items.append(item)
         for clave, titulo in FASES_EDITOR.items():
             self.item(fases, titulo, 'fase:' + clave, self.config.get('fases') == clave)
 
@@ -464,6 +471,7 @@ class MenuWorkBreak(NSObject):
             self.item(recientes, titulo, f'historial:{indice}').setToolTip_(
                 registro.get('fuente_descripcion', '') + ' — ' + str(registro.get('fecha', '')))
 
+        self.config_items.append(self.item(menu, 'Configuración…', 'configuracion'))
         menu.addItem_(NSMenuItem.separatorItem())
         self.iniciar_item = self.item(menu, 'Iniciar bot', 'iniciar')
         self.detener_item = self.item(menu, 'Detener bot', 'detener', habilitado=False)
@@ -510,21 +518,26 @@ class MenuWorkBreak(NSObject):
         elif self.controlador.deteniendo:
             detalle = 'Terminando la sesión y restaurando el estado'
         self.fase_item.setTitle_(detalle)
-        self.iniciar_item.setEnabled_(not activo and not self.saliendo)
+        self.iniciar_item.setEnabled_(not activo and not self.saliendo and not self.actualizador.consultando
+                                      and not (self.ventana_configuracion is not None
+                                               and self.ventana_configuracion.ventana.isVisible()))
         self.detener_item.setEnabled_(activo and not self.controlador.deteniendo)
         for item in self.config_items:
             item.setEnabled_(not activo and not self.saliendo)
         for item in self.config_web_items:
             item.setEnabled_(not activo and not self.saliendo and self.config.get('modo') != 'editor')
+        for item in self.config_editor_items:
+            item.setEnabled_(not activo and not self.saliendo and self.config.get('modo') != 'web')
         self.actualizar_item.setEnabled_(not activo and not self.saliendo and not self.actualizador.consultando)
-        self.actualizar_item.setTitle_('Buscando actualizaciones…' if self.actualizador.consultando else 'Buscar actualizaciones…')
+        self.actualizar_item.setTitle_(self.actualizador.texto_menu if self.actualizador.consultando else 'Buscar actualizaciones…')
         self.salir_item.setTitle_('Deteniendo antes de salir…' if self.saliendo else 'Salir de WorkBreak')
         self.salir_item.setEnabled_(not self.saliendo)
         if not activo and not self.saliendo:
             resultado = self.actualizador.obtener_resultado()
             if resultado is not None:
                 self.mostrar_actualizacion(resultado)
-        if self.saliendo and not activo:
+        if self.saliendo and not activo and not self.actualizador.consultando:
+            self.actualizador.descartar()
             self.controlador.cerrar()
             if self.timer:
                 self.timer.invalidate()
@@ -542,8 +555,31 @@ class MenuWorkBreak(NSObject):
 
     @objc.python_method
     def mostrar_actualizacion(self, resultado):
+        if resultado.get('cancelada'):
+            return
         if resultado.get('error'):
             self.aviso('Actualizaciones de WorkBreak', resultado['error'])
+            return
+        if resultado.get('descargada'):
+            alerta = NSAlert.alloc().init()
+            icono = NSImage.alloc().initWithContentsOfFile_(str(recurso('assets/icon.svg')))
+            if icono is not None:
+                alerta.setIcon_(icono)
+            alerta.setMessageText_(f"WorkBreak {resultado['descargada']['version']} listo para instalar")
+            alerta.setInformativeText_('WorkBreak se cerrará, instalará la actualización y volverá a abrirse. '
+                                      'Tu configuración se conservará. macOS puede solicitar autorización de administrador.')
+            alerta.addButtonWithTitle_('Instalar y reiniciar')
+            alerta.addButtonWithTitle_('Ahora no')
+            NSApplication.sharedApplication().activateIgnoringOtherApps_(True)
+            if alerta.runModal() == 1000:
+                try:
+                    self.actualizador.instalar()
+                    self.solicitar_salida()
+                except Exception as error:
+                    self.actualizador.descartar()
+                    self.aviso('No se pudo iniciar la instalación', str(error))
+            else:
+                self.actualizador.descartar()
             return
         nueva = resultado.get('actualizacion')
         if nueva is None:
@@ -551,13 +587,16 @@ class MenuWorkBreak(NSObject):
             return
         NSApplication.sharedApplication().activateIgnoringOtherApps_(True)
         alerta = NSAlert.alloc().init()
+        icono = NSImage.alloc().initWithContentsOfFile_(str(recurso('assets/icon.svg')))
+        if icono is not None:
+            alerta.setIcon_(icono)
         alerta.setMessageText_(f"WorkBreak {nueva['version']} disponible")
-        alerta.setInformativeText_(f'Versión instalada: {VERSION}. Descarga el DMG y ejecuta el instalador para actualizar sin borrar tu configuración. Cierra WorkBreak antes de instalar.')
+        alerta.setInformativeText_(f'Versión instalada: {VERSION}. La actualización se descargará aquí. '
+                                  'Después podrás instalar y reiniciar sin abrir el DMG ni perder tu configuración.')
         alerta.addButtonWithTitle_('Descargar actualización')
         alerta.addButtonWithTitle_('Ahora no')
         if alerta.runModal() == 1000:
-            if not NSWorkspace.sharedWorkspace().openURL_(NSURL.URLWithString_(nueva['url'])):
-                self.aviso('WorkBreak', 'No se pudo abrir la descarga en el navegador.')
+            self.actualizador.descargar(nueva)
 
     @objc.python_method
     def preguntar(self, titulo, mensaje, valor):
@@ -588,45 +627,55 @@ class MenuWorkBreak(NSObject):
                         self.aviso('Registro de WorkBreak', 'No se pudo abrir: ' + str(self.controlador.ruta_log))
                 else:
                     self.aviso('Registro de WorkBreak', 'Todavía no se ha iniciado ninguna sesión.')
-            elif self.controlador.activo or self.saliendo:
+            elif self.controlador.activo or self.saliendo or self.actualizador.consultando:
                 return
             elif comando == 'actualizaciones':
                 self.actualizador.buscar()
+            elif comando == 'configuracion':
+                if self.ventana_configuracion is None or not self.ventana_configuracion.ventana.isVisible():
+                    self.ventana_configuracion = VentanaConfiguracion.alloc().init()
+                    self.ventana_configuracion.preparar(self)
+                self.ventana_configuracion.mostrar()
             elif comando == 'iniciar':
+                if self.ventana_configuracion is not None and self.ventana_configuracion.ventana.isVisible():
+                    return
                 self.controlador.iniciar(self.config)
             else:
                 self.configurar(comando)
-                self.construir_menu()
             self.actualizar(None)
         except Exception as error:
             self.aviso('WorkBreak', str(error))
 
     @objc.python_method
-    def configurar(self, comando):
+    def configurar(self, comando, config=None):
+        compartida = config is None
+        config = copy.deepcopy(self.config) if compartida else config
         if comando.startswith('modo:'):
-            self.config['modo'] = comando.split(':', 1)[1]
+            config['modo'] = comando.split(':', 1)[1]
         elif comando.startswith('browser:'):
-            self.config['browser'] = comando.split(':', 1)[1] or None
+            config['browser'] = comando.split(':', 1)[1] or None
         elif comando.startswith('fase:'):
-            self.config['fases'] = comando.split(':', 1)[1]
+            config['fases'] = comando.split(':', 1)[1]
         elif comando.startswith('historial:'):
-            self.config = copy.deepcopy(self.historial[int(comando.split(':', 1)[1])])
-            self.config.setdefault('fases', 'ambas')
-            self.config.setdefault('modo', 'ambos')
+            registro = copy.deepcopy(self.historial[int(comando.split(':', 1)[1])])
+            config.clear()
+            config.update(registro)
+            config.setdefault('fases', 'ambas')
+            config.setdefault('modo', 'ambos')
         elif comando == 'webs':
             dialogo = DialogoWebs.alloc().init()
-            dialogo.preparar(self.config.get('paginas', []), self.config.get('nombres_web', {}))
+            dialogo.preparar(config.get('paginas', []), config.get('nombres_web', {}))
             paginas = dialogo.mostrar()
             if paginas is not None:
-                self.config['paginas'] = paginas
-                self.config['nombres_web'] = dict(dialogo.nombres)
+                config['paginas'] = paginas
+                config['nombres_web'] = dict(dialogo.nombres)
         elif comando == 'tiempo':
             dialogo = DialogoTiempo.alloc().init()
-            dialogo.preparar(self.config.get('tiempo'))
+            dialogo.preparar(config.get('tiempo'))
             if dialogo.mostrar():
-                self.config['tiempo'] = dialogo.minutos
+                config['tiempo'] = dialogo.minutos
         elif comando == 'fuente:aleatorio':
-            self.config.update(fuente_tipo='aleatorio', directorio=None,
+            config.update(fuente_tipo='aleatorio', directorio=None,
                                fuente_descripcion='Código React/TS aleatorio')
         elif comando == 'fuente:directorio':
             NSApplication.sharedApplication().activateIgnoringOtherApps_(True)
@@ -637,8 +686,23 @@ class MenuWorkBreak(NSObject):
             selector.setAllowsMultipleSelection_(False)
             if selector.runModal() == 1:
                 ruta = str(selector.URL().path())
-                self.config.update(fuente_tipo='directorio', directorio=ruta,
+                config.update(fuente_tipo='directorio', directorio=ruta,
                                    fuente_descripcion='Directorio real: ' + ruta)
+
+        if compartida and config != self.config:
+            self.aplicar_configuracion(config)
+
+    @objc.python_method
+    def aplicar_configuracion(self, config):
+        if self.controlador.activo or self.actualizador.consultando or self.saliendo:
+            raise ValueError('Detén el bot o espera a que termine la actualización antes de configurar.')
+        nueva = copy.deepcopy(config)
+        guardar_preferencias(nueva)
+        self.config.clear()
+        self.config.update(nueva)
+        self.construir_menu()
+        if self.ventana_configuracion is not None:
+            self.ventana_configuracion.refrescar()
 
     @objc.python_method
     def mostrar_estadisticas(self):
@@ -673,14 +737,15 @@ class MenuWorkBreak(NSObject):
 
     @objc.python_method
     def solicitar_salida(self):
+        self.actualizador.cancelar()
         self.saliendo = True
         self.controlador.detener()
         self.actualizar(None)
 
 
 def ejecutar_interfaz():
-    # Una sola interfaz por checkout; el archivo se libera también ante una salida inesperada.
-    identificador = hashlib.sha256(str(Path(__file__).resolve().parent).encode()).hexdigest()[:12]
+    # Una interfaz por usuario, incluso entre distintas instalaciones.
+    identificador = hashlib.sha256(f"{APP_ID}:{os.getuid()}".encode()).hexdigest()[:12]
     ruta_lock = Path(tempfile.gettempdir()) / f'workbreak-{identificador}.lock'
     with ruta_lock.open('a') as bloqueo:
         try:

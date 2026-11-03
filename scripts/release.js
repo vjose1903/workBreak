@@ -60,17 +60,28 @@ function planRelease(cwd, kind) {
   const current = fs.readFileSync(path.join(cwd, 'VERSION'), 'utf8').trim();
   const target = calculateVersion(current, kind);
   const tag = `v${target}`;
-  if (git(cwd, 'tag', '--list', tag)) throw new Error(`El tag local ${tag} ya existe. No se reemplazan tags publicados.`);
+  const localTag = git(cwd, 'tag', '--list', tag);
+  const status = git(cwd, 'status', '--short');
+  const head = git(cwd, 'rev-parse', 'HEAD');
+  const resume = kind === 'actual' && !!localTag && !status
+    && git(cwd, 'rev-parse', `${tag}^{commit}`) === head;
+  if (localTag && !resume) throw new Error(`El tag local ${tag} ya existe. No se reemplazan tags publicados.`);
   const refs = git(cwd, 'ls-remote', 'origin', `refs/heads/${branch}`, 'refs/tags/v*');
   let remoteHead;
   for (const line of refs.split('\n').filter(Boolean)) {
     const [sha, ref] = line.split(/\s+/);
-    if (ref === `refs/tags/${tag}`) throw new Error(`El tag ${tag} ya existe en origin.`);
+    if (ref === `refs/tags/${tag}` && !resume) throw new Error(`El tag ${tag} ya existe en origin.`);
     const remoteVersion = /^refs\/tags\/v((?:0|[1-9]\d*)\.(?:0|[1-9]\d*)\.(?:0|[1-9]\d*))$/.exec(ref);
     if (remoteVersion && compareVersions(target, remoteVersion[1]) < 0) {
       throw new Error(`La versión ${target} es anterior al tag remoto v${remoteVersion[1]}. Actualiza VERSION.`);
     }
     if (ref === `refs/heads/${branch}`) remoteHead = sha;
+  }
+  if (resume) {
+    const remoteTag = git(cwd, 'ls-remote', 'origin', `refs/tags/${tag}`, `refs/tags/${tag}^{}`);
+    const commits = remoteTag.split('\n').filter(Boolean);
+    const resolved = commits.find(line => line.endsWith('^{}')) || commits[0];
+    if (resolved && resolved.split(/\s+/)[0] !== head) throw new Error('El tag remoto apunta a otro commit; no se modificará.');
   }
   if (remoteHead) {
     try {
@@ -79,7 +90,7 @@ function planRelease(cwd, kind) {
       throw new Error(`Sincroniza la rama ${branch} con origin antes de publicar. No se hará push forzado.`);
     }
   }
-  return { current, target, tag, branch, head: git(cwd, 'rev-parse', 'HEAD'),
+  return { resume, current, target, tag, branch, head: git(cwd, 'rev-parse', 'HEAD'),
     status: git(cwd, 'status', '--short') };
 }
 
@@ -89,6 +100,10 @@ function publishRelease(cwd, plan, description, { dryRun = false } = {}) {
   if (git(cwd, 'branch', '--show-current') !== plan.branch || git(cwd, 'rev-parse', 'HEAD') !== plan.head || git(cwd, 'status', '--short') !== plan.status
       || fs.readFileSync(path.join(cwd, 'VERSION'), 'utf8').trim() !== plan.current) {
     throw new Error('El checkout cambió mientras preparabas la publicación. Vuelve a ejecutar el comando.');
+  }
+  if (plan.resume) {
+    git(cwd, 'push', '--atomic', 'origin', `HEAD:refs/heads/${plan.branch}`, `refs/tags/${plan.tag}`);
+    return;
   }
   const summary = `release: WorkBreak ${plan.tag}`;
   let committed = false;
@@ -158,7 +173,7 @@ async function completeRelease(cwd, plan, repo, {
   async function findRun() {
     for (let attempt = 0; attempt < attempts; attempt += 1) {
       const runs = JSON.parse(run(cwd, ['run', 'list', '--repo', repo, '--workflow', workflow,
-        '--commit', sha, '--limit', '20', '--json', 'databaseId,event,headBranch,url']));
+        '--commit', sha, '--limit', '20', '--json', 'databaseId,event,headBranch,url,conclusion']));
       const found = runs.find(item => item.headBranch === plan.tag
         && ['push', 'workflow_dispatch'].includes(item.event));
       if (found) return found;
@@ -174,6 +189,9 @@ async function completeRelease(cwd, plan, repo, {
     build = await findRun();
   }
   if (!build) throw new Error(`GitHub no registró la compilación de ${plan.tag}. El tag ya está publicado; no se ha reemplazado.`);
+  if (plan.resume && ['failure', 'cancelled', 'timed_out', 'action_required'].includes(build.conclusion)) {
+    run(cwd, ['run', 'rerun', String(build.databaseId), '--repo', repo]);
+  }
   console.log(`Compilación: ${build.url}`);
   try {
     run(cwd, ['run', 'watch', String(build.databaseId), '--repo', repo, '--exit-status', '--interval', '10'],
@@ -213,7 +231,7 @@ async function main(args = process.argv.slice(2)) {
     console.log(`\nWorkBreak · versión actual ${current}`);
     let kind = options.kind;
     if (!kind) {
-      console.log('  1. Mayor: cambio incompatible\n  2. Versión: nueva funcionalidad\n  3. Parche: corrección\n  4. Actual: publicar VERSION sin incrementarla');
+      console.log('  1. Mayor: cambio incompatible\n  2. Versión: nueva funcionalidad\n  3. Parche: corrección\n  4. Actual: publicar o reanudar VERSION sin incrementarla');
       kind = { 1: 'mayor', 2: 'version', 3: 'parche', 4: 'actual' }[(await rl.question('Elige 1, 2, 3 o 4: ')).trim()];
       if (!kind) throw new Error('Debes elegir 1, 2, 3 o 4.');
     }

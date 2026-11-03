@@ -9,6 +9,10 @@ from statistics_tracker import StatisticsTracker
 from user_activity import PausaPorActividad
 
 
+class NavegacionCambiada(RuntimeError):
+    pass
+
+
 class WebInteractor(BaseAutomation):
     def __init__(self, stats_tracker: StatisticsTracker):
         super().__init__()
@@ -181,6 +185,8 @@ class WebInteractor(BaseAutomation):
             # Los clics del propio bot pueden navegar: conservar la dirección resultante.
             if contexto['intervenida']:
                 contexto['url'] = self._leer_url_actual()
+        except NavegacionCambiada:
+            logging.info('La página navegó durante la interacción; se conserva la pestaña y finaliza la visita')
         except PausaPorActividad:
             contexto['intervenida'] = True
             interrumpido = True
@@ -242,6 +248,8 @@ class WebInteractor(BaseAutomation):
         except pyautogui.FailSafeException:
             logging.warning("Failsafe activado durante la navegación")
             raise FailsafeActivo("Failsafe activado durante la interacción web")
+        except NavegacionCambiada:
+            raise
         except Exception as e:
             logging.error(f"Error interactuando con página {pagina}: {e}", exc_info=True)
             raise
@@ -267,7 +275,7 @@ class WebInteractor(BaseAutomation):
         if self.identidad_ventana_activa() != self._ventana_web:
             raise RuntimeError('Cambió la ventana del navegador; se cancela la interacción')
         if self._leer_url_actual() != self._url_interaccion:
-            raise RuntimeError('Cambió la dirección del navegador; se cancela la interacción')
+            raise NavegacionCambiada('Cambió la dirección del navegador; se finaliza la visita')
 
     def _queda_tiempo(self, tiempo_final) -> bool:
         """Indica si queda tiempo (duración de la página y límite global)"""

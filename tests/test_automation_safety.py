@@ -41,6 +41,26 @@ class AutomationSafetyTest(unittest.TestCase):
         teclado.hotkey.assert_not_called()
         teclado.write.assert_not_called()
 
+    def test_mouse_editor_no_envia_eventos_si_cambia_ventana(self):
+        self.editor._ventana_mouse_editor = 12
+        with patch.object(self.editor, 'identidad_ventana_activa', return_value=13):
+            for accion in (lambda: self.editor._scroll(2), self.editor._click,
+                           self.editor._inicio_archivo):
+                with self.assertRaises(EditorNoDisponible):
+                    accion()
+        teclado.scroll.assert_not_called()
+        teclado.click.assert_not_called()
+        teclado.hotkey.assert_not_called()
+
+    def test_navegacion_propia_finaliza_visita_sin_fallo(self):
+        NavegacionCambiada = WebInteractor._procesar_pagina.__globals__['NavegacionCambiada']
+        self.web._contexto = {'abierta': True, 'navegada': True, 'intervenida': False,
+                             'pagina': 'https://example.com', 'url': 'https://example.com'}
+        with patch.object(self.web, 'activar_navegador', return_value=True), \
+                patch.object(self.web, 'interactuar_con_pagina', side_effect=NavegacionCambiada()):
+            self.web._procesar_pagina('https://example.com')
+        self.assertIsNone(self.web._contexto)
+
     def setUp(self):
         historial = patch('automation_bot.guardar_configuracion')
         historial.start()

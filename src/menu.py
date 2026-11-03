@@ -25,8 +25,15 @@ FASES_EDITOR = {
 RUTA_HISTORIAL = ruta_historial()
 
 
+MAX_MINUTOS = (9999 * 3600 + 59 * 60 + 59) / 60
+
+
+def tiempo_valido(minutos):
+    return minutos is None or (type(minutos) in (int, float) and 1 / 60 <= minutos <= MAX_MINUTOS)
+
+
 def formatear_tiempo(minutos):
-    if not minutos:
+    if not minutos or not tiempo_valido(minutos):
         return 'Indefinido'
     segundos = round(minutos * 60)
     return f'{segundos // 3600:02d}:{segundos % 3600 // 60:02d}:{segundos % 60:02d}'
@@ -250,7 +257,7 @@ def _registro_valido(registro) -> bool:
         and all(isinstance(url, str) and isinstance(nombre, str) and bool(nombre.strip())
                 for url, nombre in registro.get("nombres_web", {}).items())
         and isinstance(paginas, list) and all(isinstance(p, str) for p in paginas)
-        and (tiempo is None or type(tiempo) in (int, float) and tiempo > 0 and math.isfinite(tiempo))
+        and tiempo_valido(tiempo)
         and isinstance(registro.get("modo", "ambos"), str) and registro.get("modo", "ambos") in MODOS_INTERACCION
         and isinstance(fases, str) and fases in FASES_EDITOR
         and isinstance(registro.get('fuente_descripcion', ''), str)

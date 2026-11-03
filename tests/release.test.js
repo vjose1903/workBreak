@@ -227,3 +227,26 @@ test('rechaza Release en borrador, prerelease, de otro tag o con DMG sin subir',
     await assert.rejects(completeRelease(p.root, p.plan, p.repo, { run, attempts: 1 }), /no está publicada/);
   }
 });
+
+test('reanuda un tag inmutable del HEAD limpio y rechaza cambios pendientes', t => {
+  const { root } = repository(t);
+  git(root, 'tag', '-a', 'v1.0.0', '-m', 'Versión inicial');
+  const plan = planRelease(root, 'actual');
+  assert.equal(plan.resume, true);
+  const sha = git(root, 'rev-parse', 'v1.0.0^{commit}');
+  publishRelease(root, plan, 'Reanudar compilación');
+  assert.equal(git(root, 'rev-parse', 'v1.0.0^{commit}'), sha);
+  assert.equal(planRelease(root, 'actual').resume, true);
+  fs.writeFileSync(path.join(root, 'pendiente.txt'), 'cambio');
+  assert.throws(() => planRelease(root, 'actual'), /ya existe/);
+});
+
+test('reanudar reintenta Actions fallido antes de seguir la publicación', async t => {
+  const fixture = publication(t);
+  fixture.plan.resume = true;
+  fixture.build.conclusion = 'failure';
+  await completeRelease(fixture.root, fixture.plan, fixture.repo, { run: fixture.run, sleep: async () => {} });
+  const rerun = fixture.calls.findIndex(args => args[0] === 'run' && args[1] === 'rerun');
+  const watch = fixture.calls.findIndex(args => args[0] === 'run' && args[1] === 'watch');
+  assert.ok(rerun >= 0 && watch > rerun);
+});

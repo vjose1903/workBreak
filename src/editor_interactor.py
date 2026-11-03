@@ -293,14 +293,25 @@ class EditorInteractor(BaseAutomation):
 
         self._asegurar_destino()
 
-        self.necesita_reposicionar = True
-        self._iniciar_fase_mouse()
+        self._ventana_mouse_editor = self.identidad_ventana_activa()
+        if self._ventana_mouse_editor is None:
+            raise EditorNoDisponible('No se pudo identificar la ventana del editor')
+        try:
+            self.necesita_reposicionar = True
+            self._iniciar_fase_mouse()
+            while time.monotonic() < fin:
+                if not self._queda_tiempo_editor(tiempo_final):
+                    break
+                self._movimiento_fase_mouse()
+                self._esperar(random.uniform(0.4, 2.0))
+        finally:
+            self._ventana_mouse_editor = None
 
-        while time.monotonic() < fin:
-            if not self._queda_tiempo_editor(tiempo_final):
-                break
-            self._movimiento_fase_mouse()
-            self._esperar(random.uniform(0.4, 2.0))
+    def _antes_accion(self):
+        super()._antes_accion()
+        ventana = getattr(self, '_ventana_mouse_editor', None)
+        if ventana is not None and self.identidad_ventana_activa() != ventana:
+            raise EditorNoDisponible('Cambió la ventana del editor; se cancela la interacción')
 
     def _iniciar_fase_mouse(self) -> None:
         """Sube al inicio del archivo y hace clic sobre el editor para enfocarlo"""

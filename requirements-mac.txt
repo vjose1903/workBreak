@@ -1,3 +1,4 @@
 -r requirements-base.txt
 pyobjc-framework-Cocoa
+pyobjc-framework-ServiceManagement
 certifi
