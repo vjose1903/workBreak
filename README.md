@@ -1,48 +1,229 @@
-# Bot de Interacción con Editor y Navegador
+<p align="center">
+  <img src="assets/icon.svg" alt="Logo de WorkBreak" width="88" />
+</p>
 
-<p style="background-color: #FFEB3B; color: #D32F2F; padding: 10px; font-weight: bold;"> ¡¡¡Advertencia!!! Si tienes múltiples monitores, asegúrate de mantener tanto el navegador como el editor en la misma pantalla donde se ejecuta el script para evitar problemas de interacción.</p>
+<h1 align="center">WorkBreak</h1>
 
-Este bot permite interactuar automáticamente con un editor de código y un navegador web, simulando escritura, movimientos del mouse y clics.
+<p align="center">
+  Automatización de escritura y navegación, desde la barra de menús de tu Mac.
+</p>
 
-## Requisitos
+<p align="center">
+  <img src="https://img.shields.io/badge/versi%C3%B3n_del_c%C3%B3digo-1.0.0-536DFE" alt="Versión del código: 1.0.0" />
+  <img src="https://img.shields.io/badge/macOS-15%2B-black?logo=apple" alt="macOS 15 o posterior" />
+  <img src="https://img.shields.io/badge/arquitecturas-Intel_%7C_Apple_Silicon-00A6CB" alt="Intel y Apple Silicon" />
+  <a href="https://github.com/vjose1903/workBreak/actions/workflows/release-macos.yml"><img src="https://github.com/vjose1903/workBreak/actions/workflows/release-macos.yml/badge.svg" alt="Estado de publicación de macOS" /></a>
+</p>
 
-Las fases de mouse detectan los monitores conectados y utilizan el área visible de la ventana del editor o navegador, aunque esté fuera del monitor principal. En macOS se utilizan coordenadas globales en puntos para admitir pantallas Retina y monitores a la izquierda o encima del principal. Si una ventana ocupa varias pantallas, se elige la mayor área de interacción continua dentro de una pantalla. La posición de las ventanas y las pantallas se vuelve a consultar durante la fase de mouse; no hace falta seleccionar un monitor en el menú.
+<p align="center">
+  <a href="#-descargas">Descargar</a> ·
+  <a href="#-primeros-pasos">Primeros pasos</a> ·
+  <a href="#-interfaz-y-configuración">Interfaz</a> ·
+  <a href="#-actualizaciones">Actualizar</a> ·
+  <a href="#-desarrollo-y-publicación">Desarrollo</a>
+</p>
 
-* Python 3.x
-* Pip (administrador de paquetes de Python)
+WorkBreak simula escritura en **Visual Studio Code** y movimientos, clics y scroll en un navegador. Puedes utilizar solo el editor, solo la web o alternar ambos, elegir las fases y definir una duración. Se controla desde su **W en la barra de menús**, sin mantener una terminal abierta cuando utilizas la aplicación instalada.
 
-### Dependencias Generales
+## 📥 Descargas
 
-* `pyautogui`
-* `argparse`
-* `pygetwindow`
-* `pyperclip`
+### 🍎 macOS · Intel y Apple Silicon
 
-### Dependencias en Windows
+**Requisito: macOS 15 o posterior.** El instalador incluye Python y las dependencias; no necesitas instalarlos por separado.
 
-* `pywin32>=305; platform_system=="Windows"`
-* `psutil; platform_system=="Windows"`
+| Tu Mac | Arquitectura | Instalador de la versión 1.0.0 |
+| --- | --- | --- |
+| Apple Silicon · familia M1, M2, M3, M4 o M5 | `arm64` | [⬇ Descargar DMG para Apple Silicon](https://github.com/vjose1903/workBreak/releases/download/v1.0.0/WorkBreak-1.0.0-macos-arm64.dmg) |
+| Procesador Intel | `x86_64` | [⬇ Descargar DMG para Intel](https://github.com/vjose1903/workBreak/releases/download/v1.0.0/WorkBreak-1.0.0-macos-x86_64.dmg) |
 
-## Instalación
+> **Primera publicación pendiente:** todavía no hay una Release publicada. Los enlaces directos de la tabla corresponden a la versión `1.0.0` y funcionarán cuando el CI/CD publique sus instaladores. La compilación y el funcionamiento nativo en Apple Silicon siguen pendientes de validación en ARM.
 
-### Aplicación de macOS: instalar y actualizar sin Terminal
+Para futuras versiones, consulta **[la última Release estable](https://github.com/vjose1903/workBreak/releases/latest)** o **[todas las versiones y sus cambios](https://github.com/vjose1903/workBreak/releases)**. Cada Release contiene DMG, PKG y sumas SHA-256, separados por arquitectura. Los enlaces de la tabla son de una versión concreta; no cambian de destino al publicarse una nueva.
 
-Los instaladores versionados se publican en [GitHub Releases](https://github.com/vjose1903/workBreak/releases).
-Descarga el DMG correspondiente a tu Mac: `arm64` para Apple Silicon o `x86_64` para Intel. Esta distribución requiere macOS 15 o posterior.
+**¿Cuál necesitas?** En el menú  → **Acerca de este Mac**, si aparece «Chip Apple M…», elige Apple Silicon. Si aparece «Procesador Intel», elige Intel.
 
-1. Abre el DMG y ejecuta el archivo `.pkg` que contiene.
-2. El instalador coloca **WorkBreak.app** en **Aplicaciones**. Ábrelo desde allí: aparecerá su W en la barra superior, sin ventana de Terminal ni una instalación adicional de Python.
-3. Al iniciar el bot por primera vez, concede a WorkBreak los permisos de **Accesibilidad**, **Monitorización de entrada** y **Automatización** que macOS solicite para el editor y el navegador. Los permisos de Terminal no sustituyen los de esta aplicación.
+### 🪟 Windows · En construcción
 
-Para actualizar, utiliza **Buscar actualizaciones…** en el menú de WorkBreak. La aplicación consulta la última Release estable de este repositorio y ofrece descargar el DMG compatible. Cierra WorkBreak y ejecuta el nuevo `.pkg`: actualizará la aplicación existente, sin borrarla manualmente. El instalador rechaza la instalación mientras la aplicación empaquetada está abierta y comprueba las versiones para evitar sobrescribir una más reciente con otra antigua.
+🚧 **La aplicación y el instalador para Windows están en construcción.** Todavía no hay un ejecutable Windows publicado ni una interfaz equivalente a la de macOS. El repositorio conserva el modo de terminal y las dependencias de Windows para desarrollo; esto no equivale a una distribución terminada.
 
-La configuración instalada se conserva en `~/Library/Application Support/WorkBreak/config_history.json`; los registros están en `~/Library/Logs/WorkBreak/`. Ambos quedan fuera de la aplicación y sobreviven a su sustitución. El build local migra una vez el historial del checkout a Application Support si allí todavía no existe uno. Nunca incluye configuraciones personales en el DMG ni reemplaza las ya instaladas.
+## 🚀 Primeros pasos
 
-La distribución actual utiliza firma local ad hoc, **sin Developer ID ni notarización de Apple**. macOS puede bloquear la primera apertura de un archivo descargado; la autorización se gestiona en **Ajustes del Sistema → Privacidad y seguridad**. Tras actualizar puede ser necesario renovar los permisos de automatización. No se desactiva Gatekeeper. La descarga es explícita y la instalación la realiza el instalador nativo; no hay reemplazos silenciosos ni un actualizador con privilegios propios.
+1. **Descarga** el DMG correspondiente a tu procesador.
+2. **Abre el DMG** y ejecuta el archivo `.pkg` que contiene.
+3. **Abre WorkBreak** desde Aplicaciones. Busca su W en la barra superior.
+4. **Configura** la interacción, navegador, webs, fuente de código y tiempo.
+5. Pulsa **Iniciar bot**. Para finalizar, abre la W y selecciona **Detener bot**.
 
-### Compilar una distribución
+El bot comienza únicamente cuando pulsas **Iniciar bot**. En los modos que usan el editor necesitas tener **Visual Studio Code instalado**; para la interacción web, el navegador elegido debe estar instalado.
 
-Requiere macOS 15+, Python 3.12 y las herramientas de línea de comandos de Apple. Las dependencias del build están fijadas en `requirements-build-mac.lock`; se instalan en un entorno independiente del Python habitual:
+### 🔐 Permisos y primera apertura
+
+Concede los permisos que solicite macOS en **Ajustes del Sistema → Privacidad y seguridad**:
+
+| Permiso | Para qué se utiliza |
+| --- | --- |
+| **Accesibilidad** | Enviar las interacciones de teclado y mouse y verificar las ventanas. |
+| **Monitorización de entrada** | Detectar tu actividad y pausar la automatización. |
+| **Automatización** | Activar y consultar el editor y el navegador. |
+
+La distribución utiliza **firma local ad hoc, sin Developer ID ni notarización de Apple**. macOS puede bloquear la primera apertura de una descarga: revisa la autorización en **Privacidad y seguridad**. No es necesario desactivar Gatekeeper. Después de actualizar, macOS puede pedir renovar permisos.
+
+Los permisos pertenecen a la aplicación desde la que ejecutas el bot: los de Terminal o Python no sustituyen los de **WorkBreak.app**.
+
+## 🖥️ Interfaz y configuración
+
+Las siguientes son **capturas reales de la interfaz del proyecto**, con direcciones de ejemplo. No se inició la automatización para obtenerlas.
+
+### El menú de WorkBreak
+
+<p align="center">
+  <img src="docs/images/menu.png" alt="Menú de WorkBreak: interacción, navegador, webs, fuente, tiempo, fases y controles de ejecución" width="340" />
+</p>
+
+| Opción | Qué puedes configurar |
+| --- | --- |
+| **Interacción** | Editor y navegador, solo editor o solo navegador. |
+| **Navegador** | Chrome, Edge, Opera, Firefox o ninguno. |
+| **Webs…** | Una lista de direcciones identificadas por nombre. |
+| **Fuente de código** | Código React/TypeScript aleatorio o archivos de un directorio real. |
+| **Tiempo…** | Horas, minutos y segundos, o una ejecución indefinida. |
+| **Fases del editor** | Escritura y mouse, solo escritura o solo mouse. |
+| **Configuraciones recientes** | Recuperar una de las últimas cinco configuraciones utilizadas. |
+| **Estado y estadísticas…** | Consultar el estado y los tiempos registrados. |
+| **Ver registro…** | Abrir el registro para revisar el funcionamiento o un error. |
+| **Buscar actualizaciones…** | Consultar la última versión estable compatible con tu arquitectura. |
+
+Durante la ejecución se bloquean las opciones de configuración. Puedes consultar el estado, abrir el registro, detener el bot o solicitar la salida; la aplicación espera la limpieza antes de cerrarse.
+
+### 🌐 Agregar y quitar webs
+
+<p align="center">
+  <img src="docs/images/webs.png" alt="Panel de webs con campos obligatorios de nombre y dirección, botón Agregar y tabla de direcciones configuradas" width="790" />
+</p>
+
+1. Escribe un **nombre** para identificar la web y su **dirección**. Ambos son obligatorios.
+2. Pulsa **Agregar** para incorporarla a la lista. Puedes pegar con **⌘V**.
+3. Para eliminar una entrada, selecciona su fila y pulsa **Quitar seleccionada**.
+4. Pulsa **Guardar** para aplicar los cambios o **Cancelar** para descartarlos.
+
+En **Solo editor**, las opciones Navegador y Webs se deshabilitan y muestran «Configurado solo editor». El modo **Solo navegador** requiere un navegador y al menos una web; no abre VS Code ni carga código.
+
+### ⏱️ Elegir el tiempo de ejecución
+
+<p align="center">
+  <img src="docs/images/tiempo.png" alt="Selector de tiempo con horas, minutos y segundos; ejemplo de una hora y treinta minutos" width="470" />
+</p>
+
+Desactiva **Tiempo indefinido** para introducir una duración en horas, minutos y segundos. Puedes escribir los valores o usar los controles de incremento. La duración debe ser mayor que cero; minutos y segundos admiten de `00` a `59`.
+
+<p align="center">
+  <img src="docs/images/tiempo-indefinido.png" alt="Tiempo indefinido activado: horas, minutos y segundos quedan en cero y deshabilitados" width="470" />
+</p>
+
+Al activar **Tiempo indefinido**, los campos se restablecen a `00` y quedan deshabilitados. El bot continuará hasta que lo detengas. Si hay un límite, el tiempo sigue contando durante las pausas por actividad; la limpieza puede terminar después de ese límite.
+
+### 📝 Fuente de código y fases del editor
+
+El editor es siempre **Visual Studio Code**. WorkBreak abre un archivo temporal vacío; después coloca el código completo de la fuente seleccionada. Los archivos originales del directorio no se editan.
+
+- **Código aleatorio:** genera contenido React/TypeScript.
+- **Directorio real:** busca archivos `.tsx`, `.jsx`, `.ts` y `.js` de **20 a 400 líneas**, excluyendo carpetas como `node_modules`, `dist` y `build`. El directorio elegido aparece marcado en el menú. Cada tres fases de escritura intenta cargar otro archivo, evitando repetir el anterior cuando hay alternativas válidas.
+
+| Fase | Comportamiento |
+| --- | --- |
+| **Escritura y mouse** | Alterna la reescritura de fragmentos con movimientos y scroll. |
+| **Solo escritura** | Conserva el archivo completo y reescribe fragmentos línea por línea. |
+| **Solo mouse** | Carga el código completo y realiza movimientos y scroll sin reescribirlo. |
+
+La reescritura verifica el contenido antes de reemplazar una línea y conserva sus saltos y sangría. Si una fase termina con una línea incompleta, guarda el progreso para continuar después. Solo selecciona líneas no vacías con caracteres ASCII imprimibles para la reescritura.
+
+En macOS utiliza **Option+G** para ir a la línea; los atajos se envían con modificadores explícitos y sin `Fn`. Si no puede confirmar el archivo temporal o el contenido esperado, detiene la edición para evitar sobrescribir cambios externos.
+
+### 🖱️ Varios monitores
+
+Puedes colocar el editor y el navegador en **monitores diferentes**. La fase de mouse consulta la posición de la ventana y elige un área visible dentro de la pantalla correspondiente, sin seleccionar un monitor manualmente.
+
+Se contemplan coordenadas negativas, pantallas Retina y monitores situados a la izquierda o encima del principal. Si una ventana ocupa varias pantallas, se utiliza la mayor área continua de interacción en una de ellas. La posición se vuelve a consultar durante la fase de mouse.
+
+La detección nativa reconoció cuatro monitores en el entorno de desarrollo. El flujo completo de clics y scroll en ventanas situadas en pantallas secundarias todavía requiere comprobación funcional.
+
+## ⏸️ Pausas y detención
+
+**Al usar tu teclado o mouse, el bot cede el control.** Después del margen inicial, cualquier tecla, movimiento, clic o scroll reinicia una pausa de **10 segundos desde la última actividad**. Si sigues utilizando la PC, la cuenta vuelve a empezar; si mantienes una tecla o botón pulsado, la espera comienza cuando lo sueltas.
+
+- **Primeros 5 segundos:** ignora la actividad para evitar que el Enter o clic de inicio provoque una pausa inmediata. El bot puede trabajar durante ese margen.
+- **Durante la pausa:** el menú muestra el estado y la cuenta atrás; el registro informa los reinicios y la reanudación. Sus propios eventos no reinician la espera.
+- **Al reanudar:** recupera el trabajo pendiente. Si el archivo temporal cambió externamente, puede detener la edición para proteger esos cambios.
+- **Detener bot:** finaliza la sesión también durante una pausa. **Salir de WorkBreak** solicita la detención y espera la limpieza.
+- **Emergencia:** llevar el mouse a una esquina de la pantalla principal activa la parada de PyAutoGUI. Si ejecutas desde Terminal, también puedes usar **Ctrl+C**.
+
+El portapapeles se guarda y se restaura respetando cambios externos. Las estadísticas excluyen las esperas de reanudación. Solo se permite una sesión de automatización a la vez.
+
+Las pestañas del navegador pueden permanecer abiertas al terminar o después de una pausa. El bot evita cerrar una pestaña cuya identidad no puede confirmar; también comprueba la ventana y la dirección antes de interactuar.
+
+## 🔄 Actualizaciones
+
+1. Abre la W y selecciona **Buscar actualizaciones…** con el bot detenido.
+2. Si existe una Release estable más reciente para tu arquitectura, acepta la descarga.
+3. **Cierra WorkBreak** y abre el `.pkg` dentro del nuevo DMG.
+4. El instalador actualiza la aplicación en **Aplicaciones**. No tienes que borrar la versión anterior.
+
+El instalador rechaza la actualización mientras WorkBreak está abierto y comprueba la versión para evitar reemplazar una más reciente por otra antigua. La descarga requiere tu intervención y la instalación se realiza con el instalador nativo de macOS.
+
+| Datos | Ubicación de la aplicación instalada |
+| --- | --- |
+| Configuraciones recientes | `~/Library/Application Support/WorkBreak/config_history.json` |
+| Registro con rotación | `~/Library/Logs/WorkBreak/workbreak.log` |
+
+Estos datos están fuera de la aplicación y se conservan al actualizar. Al ejecutar desde el código fuente, el historial se guarda en `config_history.json` en la raíz del proyecto. La compilación local puede migrarlo una vez a Application Support si aún no existe; nunca se incluye en el DMG.
+
+## 🛠️ Desarrollo y publicación
+
+### Ejecutar desde el código fuente en macOS
+
+Necesitas **Python 3.12**, Git y los permisos de macOS indicados anteriormente.
+
+```bash
+git clone https://github.com/vjose1903/workBreak.git
+cd workBreak
+python3.12 -m venv .venv
+source .venv/bin/activate
+python -m pip install -r requirements-mac.txt
+python src/main.py
+```
+
+Sin argumentos, macOS abre la interfaz de la barra de menús. Para usar el menú de terminal:
+
+```bash
+python src/main.py --terminal
+```
+
+### Modo avanzado por terminal
+
+Los argumentos de configuración omiten el menú e inician la sesión:
+
+```bash
+# Alternar editor y navegador durante 60 minutos
+python src/main.py -browser chrome -web "https://example.com,https://example.org" -tiempo 60
+
+# Solo editor durante 30 minutos
+python src/main.py --modo editor -tiempo 30
+
+# Solo navegador durante 15 minutos
+python src/main.py --modo web -browser chrome -web "https://example.com" -tiempo 15
+```
+
+| Parámetro | Valores |
+| --- | --- |
+| `--modo` | `ambos`, `editor` o `web`. |
+| `-browser` | `chrome`, `edge`, `opera` o `firefox`. |
+| `-web` | Direcciones separadas por comas. |
+| `-tiempo` | Minutos positivos o `indefinido`; sin valor configurado, la ejecución es indefinida. |
+| `-editor vsCode` | Compatibilidad con comandos antiguos; no permite otros editores. |
+
+### Compilar el DMG
+
+Requiere macOS 15+, Python 3.12 y las herramientas de línea de comandos de Apple.
 
 ```bash
 python3.12 -m venv .venv-build
@@ -50,166 +231,55 @@ python3.12 -m venv .venv-build
 .venv-build/bin/python scripts/build_macos.py
 ```
 
-Se generan `dist/WorkBreak-X.Y.Z-macos-ARQUITECTURA.dmg`, `.pkg` y `.sha256`. Cada build verifica la firma estructural y ejecuta una comprobación del binario: interfaz nativa, recursos, certificados HTTPS e importación de la automatización en un proceso separado, sin enviar entradas ni conectar con la red. `--no-migrate` omite la migración del historial local. Los artefactos se construyen para la arquitectura del Python usado, no son universales.
+Se generan archivos `dist/WorkBreak-X.Y.Z-macos-ARQUITECTURA.dmg`, `.pkg` y `.sha256`. La arquitectura depende del Python utilizado: **los instaladores no son universales**. Usa un entorno nativo ARM para Apple Silicon y uno Intel para `x86_64`.
 
-`VERSION` es la única fuente de versión de la aplicación, el paquete y las descargas. Para incrementarla:
+El build verifica la firma estructural y ejecuta una comprobación del binario: interfaz, icono, recursos, certificados HTTPS e importación de la automatización en un proceso separado, sin enviar teclado, mouse ni conectar con la red. `--no-migrate` omite la migración del historial local.
 
-```bash
-python scripts/version.py patch
-```
+### 🏷️ Crear una versión y publicarla
 
-Usa `patch` para correcciones, `minor` para funcionalidades y `major` para cambios incompatibles. El comando modifica `VERSION` y muestra el tag correspondiente; no confirma cambios ni publica nada.
-
-### Publicar actualizaciones mediante tags de GitHub
-
-El comando de publicación es similar al `release.js` de Novac y solo necesita Node.js 18 o posterior y Git:
+Necesitas **Node.js 18 o posterior**, Git y acceso de escritura al repositorio. Desde la raíz:
 
 ```bash
 node scripts/release.js
 ```
 
-Elige **mayor**, **versión** o **parche** y describe los cambios. Para publicar la primera `1.0.0`, o si ya incrementaste `VERSION` por separado, elige **Actual**. El script muestra la rama, la versión, el tag y los archivos pendientes antes de pedir la confirmación final. Incluye todos los cambios del proyecto que no estén ignorados por Git, crea el commit y un tag anotado con la descripción, y envía rama y tag juntos mediante un push atómico. No es necesario ejecutar los comandos Git manualmente ni compilar el DMG en tu Mac.
+Elige **mayor**, **versión** o **parche** y describe los cambios. Para publicar la primera `1.0.0`, o si ya modificaste `VERSION`, elige **Actual**.
 
-Para revisar el flujo sin modificar archivos, staging, commits ni tags:
+El script muestra la rama, versión, tag y archivos pendientes antes de pedir confirmación. **Incluye todos los cambios no ignorados del proyecto**, crea el commit y el tag anotado y envía rama y tag juntos mediante un push atómico. No reemplaza tags ni hace push forzado.
+
+Para simularlo sin modificar archivos, staging, commits ni tags:
 
 ```bash
 node scripts/release.js --dry-run --kind parche --description "Corrección de escritura"
 ```
 
-El script comprueba tags locales y remotos, límites de versión de macOS, conflictos, rama separada y sincronización con origin. No reemplaza tags existentes ni hace push forzado. Si el envío falla, conserva los cambios y muestra cómo reintentar el push sin crear otra versión.
+`VERSION` es la fuente de versión de la aplicación y los instaladores. Como alternativa, `python scripts/version.py patch` solo incrementa ese archivo; también admite `minor` y `major`. No crea commits ni publica nada.
 
-Al llegar un tag `vX.Y.Z`, el workflow `.github/workflows/release-macos.yml`:
+### ⚙️ CI/CD con GitHub Actions
 
-1. Comprueba que el tag coincida exactamente con `VERSION` y prueba el publicador con repositorios temporales.
-2. Ejecuta las pruebas de Python y compila instaladores separados para Intel y Apple Silicon.
-3. Verifica los ejecutables y genera DMG, PKG y sumas SHA-256.
-4. Prepara una Release en borrador con la descripción del tag y solo la publica cuando ambos instaladores están disponibles. Las reejecuciones pueden completar un borrador, pero no sustituyen archivos de una Release ya publicada.
+Un tag **`vX.Y.Z`** activa [el workflow de publicación](.github/workflows/release-macos.yml):
 
-La implementación y el workflow deben formar parte del commit publicado; el script los incluirá si están pendientes. No se deben mover tags publicados: cualquier corrección lleva un nuevo número y un nuevo tag. **Buscar actualizaciones…** compara versiones numéricamente y consulta únicamente Releases estables con instalador para la arquitectura actual. Los tags sin Release o sin instaladores no se ofrecen como actualizaciones instalables.
+1. Verifica que el tag coincida exactamente con `VERSION` y prueba el script de publicación.
+2. Ejecuta las pruebas Python y compila por separado **Intel** y **Apple Silicon**.
+3. Comprueba los ejecutables y genera DMG, PKG y sumas SHA-256.
+4. Crea una Release en borrador con la descripción del tag y la publica cuando ambos instaladores están disponibles.
 
-Si en el futuro dispones de certificados de distribución, el build admite `WORKBREAK_CODESIGN_IDENTITY`, `WORKBREAK_INSTALLER_IDENTITY` y `WORKBREAK_NOTARY_PROFILE` (perfil guardado en Keychain para `notarytool`). No se incluyen certificados ni contraseñas en el repositorio. La firma y notarización con Developer ID requieren configurar esas credenciales en el entorno de compilación; el workflow actual usa firma local.
+Una reejecución puede completar un borrador, pero no sustituye archivos de una Release ya publicada. Cada corrección requiere una nueva versión y un nuevo tag. Los tags sin Release o sin instaladores no se ofrecen como actualizaciones instalables.
 
-### 1. Clonar el repositorio
+Al publicar una nueva versión destacada, actualiza también los enlaces directos y la versión del código mostrados en este README. El enlace **Última Release estable** siempre permite consultar la publicación más reciente.
 
-```bash
-git clone https://github.com/vjose1903/workBreak
-cd workBreak
-```
+Si se incorporan certificados de Apple, el build admite `WORKBREAK_CODESIGN_IDENTITY`, `WORKBREAK_INSTALLER_IDENTITY` y `WORKBREAK_NOTARY_PROFILE`. El workflow actual utiliza firma local; no incluye credenciales de distribución ni realiza notarización.
 
-### 2. Instalar dependencias
+## 🩺 Solución de problemas
 
-#### En macOS/Linux
+| Situación | Qué revisar |
+| --- | --- |
+| La descarga devuelve 404 | La versión aún no está publicada o el build no terminó. Consulta [Releases](https://github.com/vjose1903/workBreak/releases) y [Actions](https://github.com/vjose1903/workBreak/actions). |
+| macOS bloquea la apertura | Revisa **Privacidad y seguridad**. La distribución no está notarizada. |
+| No puede detectar tu actividad o controlar ventanas | Concede los permisos a WorkBreak; si ejecutas desde fuente, a la aplicación que lanza Python. |
+| No encuentra código en un directorio | Comprueba las extensiones admitidas y el rango de 20 a 400 líneas. |
+| Se detiene durante una reescritura | Abre **Ver registro…**. Si la línea o el archivo cambió, la detención evita sobrescribir contenido externo. |
+| No permite instalar una actualización | Cierra WorkBreak desde su menú antes de abrir el instalador. |
+| No ofrece una actualización | Debe existir una Release estable más reciente con DMG para tu arquitectura. |
 
-```bash
-chmod +x setup.sh
-./setup.sh
-```
-
-#### En Windows
-
-```bash
-setup.bat
-```
-
-## Uso
-
-En **macOS**, ejecutar el script sin parámetros abre una **W en la barra de menús superior**:
-
-```bash
-python src/main.py
-```
-
-Haz clic en la **W** para configurar navegador, webs, fuente de código, tiempo, fases y configuraciones recientes. El bot no empieza hasta pulsar **Iniciar bot**. Mientras trabaja, las opciones de configuración quedan bloqueadas; **Detener bot**, **Estado y estadísticas**, **Ver registro** y **Salir de WorkBreak** permanecen disponibles.
-
-El menú muestra la fase actual, las pausas por actividad y su cuenta atrás. **Detener bot** interrumpe también el debounce. **Salir** solicita una detención ordenada y espera la limpieza antes de cerrar. Solo se admite una interfaz por checkout y una sesión de automatización a la vez, compartiendo el bloqueo con Terminal y los argumentos CLI. El código real se escanea en el proceso del bot, para mantener disponible el menú durante la carga.
-
-La automatización se ejecuta en un proceso separado creado con `spawn`. La interfaz permanece en el hilo principal de AppKit. El registro se guarda en `~/Library/Logs/WorkBreak/workbreak.log`, con rotación. La configuración se sigue guardando en el historial existente al iniciar una sesión válida.
-
-Para utilizar el menú anterior en Terminal:
-
-```bash
-python src/main.py --terminal
-```
-
-En Windows el menú de terminal continúa siendo el predeterminado. Los parámetros CLI conservan su funcionamiento en ambos sistemas. Al ejecutar desde el checkout se utiliza Python; la distribución DMG incluye su propia aplicación y runtime. Las dependencias de macOS están declaradas en `requirements-mac.txt`.
-
-El editor es siempre **Visual Studio Code**, sin selección adicional.
-
-El menú permite configurar:
-
-* Navegador a usar (`chrome`, `edge`, `opera`, `firefox`) o `ninguno`.
-* Webs donde simular interacción (separadas por coma).
-* Fuente del código a colocar en el editor:
-  * **Código React/TypeScript aleatorio** (por defecto).
-  * **Directorio real** con código React/TS del proyecto monitoreado: el bot escanea el directorio (ignorando `node_modules`, `dist`, `build`, etc.), solo considera archivos de **más de 20 y menos de 400 líneas**, elige archivos reales y los pega en el editor, para que las capturas muestren el código real del proyecto.
-* Tiempo de ejecución en minutos (vacío o `0` = indefinido).
-* **Interacción**: editor y navegador (por defecto), solo editor o solo navegador. El modo solo navegador exige un navegador y al menos una web, y no abre VS Code ni carga la fuente de código. Se conserva en el historial; también está disponible en la opción 9 del menú de terminal y mediante `--modo web`, `--modo editor` o `--modo ambos`.
-* **Fases del editor** (opción 6 del menú de terminal): escritura y mouse (por defecto), solo escritura o solo mouse. La elección se muestra en el resumen y se conserva en el historial. Las configuraciones antiguas usan ambas fases.
-* **Usar configuración previa**: carga una de las configuraciones de las últimas 5 sesiones (guardadas localmente en `config_history.json`). Se auto-selecciona la más reciente; también puedes elegir otra por número.
-
-El archivo `config_history.json` se crea al guardar la primera sesión en la raíz del proyecto y conserva las últimas 5 configuraciones usadas. Las actualizaciones reemplazan el archivo de forma atómica para conservar la versión anterior si falla la escritura.
-
-En los tres modos se pega inicialmente el código completo. En solo mouse se conserva ese contenido y se realizan movimientos y scroll sin reescribir fragmentos. En solo escritura se omiten las fases de mouse. Esta selección se aplica al editor; la navegación web conserva su configuración independiente. Para iniciar, pulsa **Iniciar bot** en la W, o usa la opción 7 en el menú de terminal.
-
-### Modo avanzado (parámetros CLI)
-
-Si se pasan parámetros de configuración, el bot omite el menú y utiliza siempre VS Code:
-
-```bash
-python src/main.py -browser chrome -web "https://google.com,https://chat.openai.com" -tiempo 60
-```
-
-### Parámetros
-
-* Los comandos antiguos con `-editor vsCode` siguen siendo compatibles. No se admiten otros editores.
-* `-browser` (opcional): Navegador a usar (`chrome`, `edge`, `opera`, `firefox`)
-* `-web` (opcional): Lista de URLs separadas por coma
-* `-tiempo` (opcional): Tiempo en minutos que el script debe ejecutarse. Acepta `indefinido` o un número positivo. Si no se proporciona, el script se ejecutará indefinidamente.
-
-## Funcionamiento
-
-1. Abre Visual Studio Code con una pestaña vacía respaldada por un archivo temporal con nombre único por sesión. No crea un proyecto React ni carga una plantilla inicial; el primer contenido se pega desde la fuente configurada. Lanza el editor por nombre de aplicación (`open -a` en macOS / binario en Windows) y reintenta activar su ventana. Antes de la inyección y de cada paso de edición, comprueba la activación y el título del archivo temporal; si no puede confirmarlos, detiene el bot. El título de ventana debe incluir el nombre del archivo. Si Visual Studio Code no se puede abrir, termina con un error claro.
-2. Inyecta código (React/TypeScript aleatorio o archivos reales del proyecto) una vez, copiándolo al portapapeles y pegándolo en el editor. Después elige bloques y **reescribe su contenido carácter a carácter, línea por línea, conservando los saltos de línea**. Cada carácter se inserta mediante un pegado individual para evitar que el editor añada automáticamente comillas, paréntesis o sangría. La escritura conserva sus pausas variables:
-   * Si una fase de escritura termina a mitad de una línea, el bot **recuerda dónde quedó** (`bloque`, `indice_linea`, `desplazamiento`) y en la siguiente sesión de teclado **continúa exactamente desde ahí**, sin volver a borrar.
-   * Al pasar a la fase de clics, guarda el estado; al volver a escribir, se reposiciona en la línea pendiente. En macOS usa `Option+G`, comprueba por portapapeles el contenido del panel antes de enviar las coordenadas y compara la línea de destino con el código cargado antes de continuar. Si no puede confirmarlo, se detiene sin editar. En Windows usa `Ctrl+G`.
-   * La **fase de mouse** sube al inicio del archivo (`Ctrl+Home` en Windows, `Cmd+↑` en macOS), hace clic sobre el editor para enfocarlo y hace scroll arriba/abajo sobre el código. La vuelta a la línea pendiente se hace una sola vez, cuando se reanuda la escritura.
-   * Cuando termina de reescribir un bloque completo, **toma otro bloque o línea** del código.
-   * El tamaño del bloque se adapta al tamaño del archivo. Navega una sola vez a cada línea y verifica que la selección coincida exactamente con su contenido antes de reemplazarla, sin incluir el salto de línea. Al terminar comprueba el resultado; no realiza un segundo reemplazo para restaurar la sangría. Para continuar una línea parcial, verifica el texto y avanza exactamente su longitud desde la columna 1, independientemente del ajuste visual.
-   * Solo elige líneas con caracteres ASCII imprimibles. Los atajos de macOS se envían mediante Quartz con modificadores explícitos, sin `Fn`. El texto de las líneas se inserta por portapapeles. En Windows libera Ctrl/Shift/Alt tras las secuencias de edición.
-   Al completar cada bloque, el archivo queda exactamente igual al original para las capturas. Las fases de escritura y mouse tienen duraciones variables y distintas entre sí.
-3. Si se especifican URLs, abre el navegador y navega por ellas, realizando clics aleatorios dentro de una zona interior de la ventana. Si hay webs configuradas, las fases del editor y del navegador se **alternan en turnos acotados** (editor ~30-90s, navegador ~30-60s). El recorrido conserva las páginas pendientes entre turnos, aunque la lista no quepa en uno solo. Los movimientos del editor también se limitan a una zona interior; si no se puede confirmar una zona visible suficiente, se cancela la interacción.
-4. Regresa al editor y continúa la simulación en un bucle infinito o hasta que se haya alcanzado el tiempo especificado por el parámetro `-tiempo`.
-5. Al agotarse el tiempo indicado por `-tiempo`, no inicia nuevas páginas ni interacciones web. La limpieza puede terminar después del límite. Las pestañas se conservan abiertas: el bot no envía un cierre a la pestaña activa sin poder demostrar que es la que creó. Esto también protege las pestañas o ventanas abiertas por enlaces durante una visita. Sin límite configurado, continúa hasta que el usuario lo detenga manualmente.
-
-## Detener el bot
-
-Durante los primeros **5 segundos del inicio**, el bot ignora la actividad del usuario para que el Enter utilizado para arrancarlo no provoque una pausa. El bot comienza a trabajar durante ese margen, sin esperar a que termine. Los eventos ignorados no se acumulan ni disparan una pausa posterior.
-
-Después de ese margen, el bot se pausa automáticamente cuando detecta actividad del usuario en el teclado o el mouse, en cualquier aplicación y en cualquier fase. Cada tecla, movimiento, clic o scroll reinicia una espera de **10 segundos desde la última actividad**. Tras ese intervalo sin intervención, recupera su archivo y continúa; sus propios eventos no reinician la espera. Los movimientos animados se comprueban en pasos de unos 10 ms y cada carácter se comprueba antes de enviarlo.
-
-La terminal informa el inicio de la pausa, los reinicios del debounce, los segundos restantes y la reanudación. La cuenta se actualiza por segundo y los eventos continuos se agrupan para no saturar la consola. Si mantienes una tecla o un botón pulsado, indica que la cuenta comenzará cuando lo sueltes.
-
-El límite total de ejecución continúa contando durante la pausa. Las estadísticas conservan el tiempo trabajado antes de cada interrupción y excluyen la espera de reanudación. El bot conserva el contenido nuevo que copies durante una pausa para restaurarlo al finalizar, y no reemplaza un portapapeles que haya cambiado externamente.
-
-Si intervienes durante una visita web, el bot conserva la página, el índice del recorrido y el tiempo restante del turno; al reanudar no vuelve primero al editor. Conserva la pestaña anterior y continúa en una nueva: dos pestañas pueden tener la misma URL, por lo que no utiliza esa dirección como prueba de identidad. Si modificas el contenido del archivo temporal del editor, las comprobaciones exactas de línea detienen la edición para no sobrescribir tus cambios, incluso si conservaste el prefijo que había escrito el bot.
-
-Esto también se aplica si la navegación estaba pendiente de confirmar o redirigió a otra URL. Pueden quedar pestañas adicionales abiertas después de cada pausa durante la navegación.
-
-En macOS las aperturas se solicitan en segundo plano y los procesos auxiliares de activación y consulta del editor se cancelan al detectar actividad. Una acción que el sistema operativo ya haya ejecutado no puede deshacerse con la pausa. Si el monitor pierde una liberación de tecla o botón, consulta el estado físico para evitar una pausa permanente.
-
-En macOS la detección global requiere permiso de **Monitorización de entrada** y **Accesibilidad** para la aplicación desde la que ejecutas Python (por ejemplo, Terminal). Si no puede iniciar el monitor, el bot termina con un mensaje en lugar de ejecutarse sin esta protección. Windows utiliza los hooks nativos de teclado y mouse. No se requieren dependencias nuevas.
-
-Para finalizar el script, presiona `CTRL + C` en la terminal.
-
-También puedes activar la parada de emergencia de PyAutoGUI llevando el mouse a una esquina de la pantalla principal. Al detectarla, el bot no envía teclas para cerrar pestañas; puede quedar abierta la pestaña de esa interacción.
-
-La parada de emergencia se comprueba también durante el debounce, aproximadamente una vez por segundo. El límite total se revisa antes de cada acción; al agotarse solo se permiten tareas de limpieza, siempre respetando la actividad del usuario. Las operaciones nativas del portapapeles tienen un máximo de cinco segundos y se interrumpen al detectar actividad. Un error de lectura conserva el estado anterior y detiene el flujo, sin confundirlo con un portapapeles vacío. Si una copia quedó interrumpida antes de confirmar su contenido y no coincide con un valor conocido del bot, la ejecución se detiene sin sobrescribir el portapapeles actual ni el valor guardado. No se deduce la autoría mediante el contador de cambios.
-
-El historial descarta registros con tipos o valores inválidos. Los instaladores devuelven un error si falla pip. La demostración manual se ejecuta únicamente con `python test_pyautogui.py --mover-mouse`: mueve el puntero, sin hacer clic, escribir ni borrar contenido, y no se descubre como prueba automática.
-
-## Notas
-
-* Al cambiar de fase, el bot conserva el contenido exacto de la línea que acaba de escribir, aunque haya quedado incompleta. Cada carácter insertado actualiza ese estado antes de comprobar una nueva pausa. Al regresar selecciona la línea lógica completa, incluso cuando ocupa varias filas visuales, y exige igualdad completa con el estado esperado. Si la comprobación falla, registra el número de línea, las longitudes y si existía captura previa, sin imprimir el código fuente.
-
-* En Windows, puede ser necesario ejecutar la terminal como administrador para que `pyautogui` funcione correctamente.
-* En macOS, puede requerir permisos adicionales de accesibilidad en `Preferencias del Sistema > Seguridad y privacidad > Accesibilidad`.
+Para investigar un problema, comparte la versión, arquitectura, modo de interacción y el fragmento pertinente del registro. Revisa antes si contiene rutas o direcciones privadas.
