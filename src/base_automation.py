@@ -1,6 +1,7 @@
 import logging
 import os
 import platform
+import re
 import random
 import subprocess
 import time
@@ -16,6 +17,10 @@ logging.basicConfig(
 
 class FailsafeActivo(Exception):
     """Excepción para detener el bot cuando pyautogui detecta failsafe"""
+
+
+class TiempoAgotado(BaseException):
+    """Finalización normal que no debe convertirse en un fallo de interacción."""
 
 
 class BaseAutomation:
@@ -42,8 +47,13 @@ class BaseAutomation:
         self._mac_keyboard = None
         self.monitor_actividad = None
         self.portapapeles_bot = {"ultimo": None}
+        self._limpiando = False
+        self._area_mouse = None
 
     def _antes_accion(self):
+        pyautogui.failSafeCheck()
+        if not self._limpiando and self.tiempo_restante() == 0:
+            raise TiempoAgotado()
         if self.monitor_actividad is not None:
             self.monitor_actividad.comprobar()
 
@@ -55,9 +65,12 @@ class BaseAutomation:
 
     def _ejecutar_proceso(self, cmd, timeout=10, **opciones):
         """Cancela únicamente el proceso auxiliar del bot si interviene el usuario."""
+        self._antes_accion()
         if self.monitor_actividad is None:
             return subprocess.run(cmd, timeout=timeout, **opciones)
-        self._antes_accion()
+        entrada = opciones.pop('input', None)
+        if entrada is not None:
+            opciones['stdin'] = subprocess.PIPE
         check = opciones.pop('check', False)
         if opciones.pop('capture_output', False):
             opciones['stdout'] = subprocess.PIPE
@@ -71,9 +84,10 @@ class BaseAutomation:
                 if restante <= 0:
                     raise subprocess.TimeoutExpired(cmd, timeout)
                 try:
-                    stdout, stderr = proceso.communicate(timeout=min(0.02, restante))
+                    stdout, stderr = proceso.communicate(input=entrada, timeout=min(0.02, restante))
                     break
                 except subprocess.TimeoutExpired:
+                    entrada = None
                     continue
             self._antes_accion()
         except BaseException:
@@ -124,6 +138,9 @@ class BaseAutomation:
 
     def _move_to(self, x, y, duration=0):
         self._antes_accion()
+        if self._area_mouse is not None:
+            izquierda, arriba, derecha, abajo = self._area_mouse
+            x, y = max(izquierda, min(x, derecha)), max(arriba, min(y, abajo))
         if self.monitor_actividad is None:
             pyautogui.moveTo(x, y, duration=duration)
             return
@@ -139,7 +156,7 @@ class BaseAutomation:
 
     def _move_rel(self, x, y, duration=0):
         self._antes_accion()
-        if self.monitor_actividad is None:
+        if self.monitor_actividad is None and self._area_mouse is None:
             pyautogui.moveRel(x, y, duration=duration)
         else:
             actual_x, actual_y = pyautogui.position()
@@ -147,11 +164,52 @@ class BaseAutomation:
 
     def _click(self):
         self._antes_accion()
+        self._comprobar_area_mouse()
         pyautogui.click()
 
     def _scroll(self, cantidad):
         self._antes_accion()
+        self._comprobar_area_mouse()
         pyautogui.scroll(cantidad)
+
+    def _comprobar_area_mouse(self):
+        if self._area_mouse is None:
+            raise RuntimeError("No hay un área segura confirmada para el mouse")
+        x, y = pyautogui.position()
+        izquierda, arriba, derecha, abajo = self._area_mouse
+        if not (izquierda <= x <= derecha and arriba <= y <= abajo):
+            raise RuntimeError("Mouse fuera del área segura; se cancela la interacción")
+
+    def _configurar_area_mouse(self, rectangulo):
+        self._area_mouse = None
+        if rectangulo is None:
+            raise RuntimeError("No se pudo confirmar la ventana para mover el mouse")
+        x, y, ancho, alto = rectangulo
+        izquierda, arriba = max(0, x + ancho // 3), max(0, y + 160)
+        derecha = min(self.screen_width - 1, x + ancho - 30)
+        abajo = min(self.screen_height - 1, y + alto - 60)
+        if derecha <= izquierda or abajo <= arriba:
+            raise RuntimeError("La ventana no tiene un área visible suficiente para el mouse")
+        self._area_mouse = (izquierda, arriba, derecha, abajo)
+        return ((izquierda + derecha) // 2, (arriba + abajo) // 2)
+
+    def rectangulo_aplicacion(self, nombre_mac):
+        if self.is_windows:
+            import win32gui
+            x, y, derecha, abajo = win32gui.GetWindowRect(win32gui.GetForegroundWindow())
+            return x, y, derecha - x, abajo - y
+        if self.is_mac:
+            resultado = self._ejecutar_proceso(
+                ['osascript', '-e',
+                 f'set appBundleId to id of application "{nombre_mac}"\n'
+                 'tell application "System Events"\n'
+                 'tell (first application process whose bundle identifier is appBundleId)\n'
+                 'get {position, size} of front window\nend tell\nend tell'],
+                capture_output=True, text=True, check=True, timeout=5)
+            numeros = re.findall(r'-?\d+', resultado.stdout)
+            if len(numeros) == 4:
+                return tuple(map(int, numeros))
+        return None
 
     # ------------------------------------------------------------
     # Tiempo (time.monotonic)
@@ -185,6 +243,8 @@ class BaseAutomation:
             else:
                 logging.warning("Sistema operativo no soportado para activar aplicaciones")
                 return False
+        except pyautogui.FailSafeException:
+            raise
         except Exception as e:
             logging.error(f"Error activando la aplicación '{nombre_proceso or nombre_mac}': {e}")
             return False
@@ -265,26 +325,24 @@ class BaseAutomation:
     def copiar_al_portapapeles(self, texto: str) -> bool:
         """Copia texto al portapapeles con fallback nativo; True si tuvo éxito"""
         self._antes_accion()
-        try:
-            import pyperclip
-            pyperclip.copy(texto)
+        self.portapapeles_bot['escritura_pendiente'] = texto
+        exito = self._copiar_portapapeles_fallback(texto)
+        if exito:
             self.portapapeles_bot["ultimo"] = texto
-            return True
-        except Exception as e:
-            logging.warning(f"pyperclip no disponible ({e}); usando fallback del sistema")
-            exito = self._copiar_portapapeles_fallback(texto)
-            if exito:
-                self.portapapeles_bot["ultimo"] = texto
-            return exito
+            self.portapapeles_bot.pop('copia_pendiente', None)
+            self.portapapeles_bot.pop('escritura_pendiente', None)
+        return exito
 
     def _copiar_portapapeles_fallback(self, texto: str) -> bool:
         """Copia al portapapeles usando utilidades nativas (pbcopy/clip)"""
         try:
             if self.is_windows:
-                resultado = subprocess.run(["clip"], input=texto, text=True, shell=True)
+                resultado = self._ejecutar_proceso(["clip"], input=texto.encode('utf-16-le'), shell=True, timeout=5)
             else:
-                resultado = subprocess.run(["pbcopy"], input=texto, text=True)
+                resultado = self._ejecutar_proceso(["pbcopy"], input=texto, text=True, timeout=5)
             return resultado.returncode == 0
+        except pyautogui.FailSafeException:
+            raise
         except Exception as e:
             logging.error(f"Error copiando al portapapeles (fallback): {e}")
             return False
@@ -293,22 +351,59 @@ class BaseAutomation:
         """Lee el portapapeles con fallback nativo; devuelve '' si no se puede"""
         self._antes_accion()
         try:
-            import pyperclip
-            return pyperclip.paste()
-        except Exception as e:
-            logging.warning(f"pyperclip no disponible ({e}); usando fallback del sistema")
-        try:
             if self.is_windows:
-                resultado = subprocess.run(
-                    ["powershell", "-NoProfile", "-Command", "Get-Clipboard"],
-                    capture_output=True, text=True, timeout=5
+                resultado = self._ejecutar_proceso(
+                    ["powershell", "-NoProfile", "-Command",
+                     "[Console]::OutputEncoding = [System.Text.UTF8Encoding]::new(); "
+                     "[Console]::Out.Write((Get-Clipboard -Raw))"],
+                    capture_output=True, text=True, encoding='utf-8', timeout=5
                 )
             else:
-                resultado = subprocess.run(["pbpaste"], capture_output=True, text=True, timeout=5)
+                resultado = self._ejecutar_proceso(["pbpaste"], capture_output=True, text=True, timeout=5)
             return resultado.stdout if resultado.returncode == 0 else ""
+        except pyautogui.FailSafeException:
+            raise
         except Exception as e:
             logging.error(f"Error leyendo el portapapeles (fallback): {e}")
             return ""
+
+    def version_portapapeles(self):
+        """Contador nativo para distinguir una copia pendiente de otra del usuario."""
+        import ctypes as c
+        if self.is_windows:
+            return c.windll.user32.GetClipboardSequenceNumber()
+        if self.is_mac:
+            objc = c.CDLL('/usr/lib/libobjc.A.dylib')
+            # Cargar AppKit registra NSPasteboard; no requiere paquetes Python adicionales.
+            c.CDLL('/System/Library/Frameworks/AppKit.framework/AppKit')
+            objc.objc_getClass.argtypes = [c.c_char_p]
+            objc.objc_getClass.restype = c.c_void_p
+            objc.sel_registerName.argtypes = [c.c_char_p]
+            objc.sel_registerName.restype = c.c_void_p
+            direccion = c.cast(objc.objc_msgSend, c.c_void_p).value
+            enviar = c.CFUNCTYPE(c.c_void_p, c.c_void_p, c.c_void_p)(direccion)
+            tablero = enviar(objc.objc_getClass(b'NSPasteboard'), objc.sel_registerName(b'generalPasteboard'))
+            contador = c.CFUNCTYPE(c.c_long, c.c_void_p, c.c_void_p)(direccion)
+            return contador(tablero, objc.sel_registerName(b'changeCount'))
+        raise RuntimeError("No se puede identificar el portapapeles en este sistema")
+
+    def copiar_seleccion(self):
+        version = self.version_portapapeles()
+        self._hotkey(self.cmd_key, 'c')
+        self.portapapeles_bot['copia_pendiente'] = version
+        self._esperar(0.15)
+        contenido = self.leer_portapapeles()
+        self.portapapeles_bot['ultimo'] = contenido
+        self.portapapeles_bot.pop('copia_pendiente', None)
+        return contenido
+
+    def portapapeles_es_del_bot(self, contenido):
+        if contenido == self.portapapeles_bot['ultimo']:
+            return True
+        if contenido == self.portapapeles_bot.get('escritura_pendiente'):
+            return True
+        pendiente = self.portapapeles_bot.get('copia_pendiente')
+        return pendiente is not None and self.version_portapapeles() == pendiente + 1
 
     # ------------------------------------------------------------
     # Anti-reposo (caffeinate / SetThreadExecutionState)

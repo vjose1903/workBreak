@@ -28,6 +28,7 @@ class MonitorActividad:
         self._thread_id = None
         self._pulsadas = set()
         self._esta_pulsada = None
+        self.comprobar_emergencia = None
 
     def reconciliar_pulsadas(self):
         """Descarta liberaciones perdidas consultando el estado físico actual."""
@@ -81,6 +82,8 @@ class MonitorActividad:
         ultimo_log = float('-inf')
         contador_informado = None
         while True:
+            if self.comprobar_emergencia is not None:
+                self.comprobar_emergencia()
             self.reconciliar_pulsadas()
             mensaje = None
             with self._condicion:

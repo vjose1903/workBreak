@@ -122,7 +122,7 @@ class EditorInteractor(BaseAutomation):
             self.editor_actual = efectivo
             self._asegurar_destino()
             self.EDITOR_ABIERTO = True
-        except EditorNoDisponible:
+        except (EditorNoDisponible, pyautogui.FailSafeException):
             raise
         except Exception as e:
             self.manejar_error(f"Error al abrir el editor {editor}: {e}")
@@ -189,7 +189,7 @@ class EditorInteractor(BaseAutomation):
                 raise EditorNoDisponible("Sistema operativo no soportado")
             if os.path.basename(self.ruta_archivo) not in titulo:
                 raise EditorNoDisponible("El archivo temporal no está activo; se cancela la entrada")
-        except EditorNoDisponible:
+        except (EditorNoDisponible, pyautogui.FailSafeException):
             raise
         except Exception as e:
             stderr = getattr(e, "stderr", None)
@@ -216,7 +216,7 @@ class EditorInteractor(BaseAutomation):
 
         `duracion_maxima` limita el turno actual (usado al alternar con el navegador).
         """
-        tiempo_inicio = time.time()
+        tiempo_inicio = time.monotonic()
         tiempo_restante = self.tiempo_restante()
 
         if tiempo_restante is not None and tiempo_restante <= 0:
@@ -295,20 +295,16 @@ class EditorInteractor(BaseAutomation):
         try:
             self._inicio_archivo()
             self._esperar(random.uniform(0.2, 0.5))
-            rect = self._rectangulo_ventana_editor()
-            if rect:
-                x, y, ancho, alto = rect
-                self._move_to(x + ancho // 3, y + max(120, alto // 3),
-                                 duration=random.uniform(0.2, 0.6))
-            else:
-                self._move_rel(random.randint(10, 40), random.randint(10, 40),
-                                  duration=random.uniform(0.2, 0.6))
+            centro = self._configurar_area_mouse(self._rectangulo_ventana_editor())
+            self._move_to(*centro, duration=random.uniform(0.2, 0.6))
             self._click()
             self._esperar(random.uniform(0.2, 0.5))
         except pyautogui.FailSafeException:
             raise
         except Exception as e:
+            self._area_mouse = None
             logging.warning(f"No se pudo iniciar la fase de mouse: {e}")
+            raise EditorNoDisponible("No se pudo confirmar un área segura para el mouse") from e
 
     def _movimiento_fase_mouse(self) -> None:
         """Movimiento individual de la fase: scroll abajo/arriba (mayormente) y pequeños movimientos"""
@@ -331,30 +327,7 @@ class EditorInteractor(BaseAutomation):
         """Devuelve (x, y, ancho, alto) de la ventana del editor o None si no se puede obtener"""
         if not self.editor_actual:
             return None
-        info = self.EDITOR_INFO[self.editor_actual]
-        try:
-            if self.is_windows:
-                import win32gui
-                izquierda, arriba, derecha, abajo = win32gui.GetWindowRect(win32gui.GetForegroundWindow())
-                return (izquierda, arriba, derecha - izquierda, abajo - arriba)
-            if self.is_mac:
-                resultado = self._ejecutar_proceso(
-                    ["osascript", "-e",
-                     f'set appBundleId to id of application "{info["mac"]}"\n'
-                     'tell application "System Events"\n'
-                     'tell (first application process whose bundle identifier is appBundleId)\n'
-                     'get {position, size} of front window\nend tell\nend tell'],
-                    capture_output=True, text=True, timeout=5
-                )
-                if resultado.returncode != 0 or not resultado.stdout.strip():
-                    return None
-                numeros = re.findall(r"-?\d+", resultado.stdout)
-                if len(numeros) >= 4:
-                    x, y, ancho, alto = (int(v) for v in numeros[:4])
-                    return (x, y, ancho, alto)
-        except Exception as e:
-            logging.warning(f"No se pudo obtener el rectángulo de la ventana: {e}")
-        return None
+        return self.rectangulo_aplicacion(self.EDITOR_INFO[self.editor_actual]['mac'])
 
     def _liberar_modificadores(self) -> None:
         """En macOS los modificadores pertenecen al evento, no se mantienen pulsados."""
@@ -429,11 +402,15 @@ class EditorInteractor(BaseAutomation):
         texto = linea[self.desplazamiento:]
         for c in texto:
             if not self._queda_tiempo_editor(tiempo_final):
-                self._guardar_linea_actual_mac()
+                if self.desplazamiento:
+                    self._guardar_linea_actual_mac()
+                else:
+                    self._press('left')
+                    self.necesita_reposicionar = True
                 return
-            self._write(c, interval=0)
-            self._lineas_observadas.pop(self.inicio_bloque + self.indice_linea + 1, None)
+            self._insertar_caracter(c)
             self.desplazamiento += 1
+            self._lineas_observadas[self.inicio_bloque + self.indice_linea + 1] = linea[:self.desplazamiento]
             self._esperar(random.uniform(0.03, 0.08))
 
         # El editor puede insertar comillas o paréntesis automáticamente al teclear.
@@ -454,11 +431,17 @@ class EditorInteractor(BaseAutomation):
                 raise RuntimeError("No se pudo restaurar exactamente la línea reescrita")
             self._limpiar_linea_actual()
             self._hotkey(self.cmd_key, "v")
-            self._lineas_observadas.pop(self.inicio_bloque + self.indice_linea + 1, None)
+            self._lineas_observadas[self.inicio_bloque + self.indice_linea + 1] = linea
         self._guardar_linea_actual_mac()
         self.indice_linea += 1
         self.desplazamiento = 0
         self.necesita_reposicionar = True
+
+    def _insertar_caracter(self, caracter):
+        # Pegar un carácter evita que el editor añada cierres o cambie la sangría.
+        if not self.copiar_al_portapapeles(caracter):
+            raise EditorNoDisponible("No se pudo preparar el carácter de la línea")
+        self._hotkey(self.cmd_key, 'v')
 
     def _max_bloque_segun_tamano(self) -> int:
         """Tamaño máximo del bloque según el tamaño del archivo para no borrarlo entero"""
@@ -548,7 +531,7 @@ class EditorInteractor(BaseAutomation):
         self._esperar(0.1)
         self._press("enter")
         self._esperar(0.2)
-        if self.is_mac:
+        if self.is_mac or self.is_windows:
             self._confirmar_linea_mac(numero)
         self._liberar_modificadores()
 
@@ -556,10 +539,7 @@ class EditorInteractor(BaseAutomation):
         marcador = "workbreak:sin-seleccion"
         if not self.copiar_al_portapapeles(marcador):
             raise EditorNoDisponible("No se pudo preparar la comprobación del cursor")
-        self._hotkey("command", "c")
-        self._esperar(0.15)
-        contenido = self.leer_portapapeles()
-        self.portapapeles_bot["ultimo"] = contenido
+        contenido = self.copiar_seleccion()
         return None if contenido == marcador else contenido
 
     def _confirmar_linea_mac(self, numero: int) -> None:
@@ -568,13 +548,7 @@ class EditorInteractor(BaseAutomation):
         original = self.lineas_actuales[numero - 1]
         esperada = self._lineas_observadas.get(numero, original)
         actual = self._leer_linea_completa_mac()
-        coincide = actual == esperada or (not esperada and actual in (None, ""))
-        if (numero not in self._lineas_observadas and self.bloque_actual and self.desplazamiento > 0
-                and numero == self.inicio_bloque + self.indice_linea + 1):
-            # Una pausa por actividad puede impedir guardar la captura de la línea.
-            prefijo = original[:self.desplazamiento]
-            coincide = actual is not None and (
-                actual.lstrip().startswith(prefijo.lstrip()) if prefijo.strip() else not actual.strip())
+        coincide = actual is not None and actual == esperada
         if not coincide:
             logging.error("Comprobación de línea fallida: %s", json.dumps({
                 "linea": numero, "desplazamiento": self.desplazamiento,
@@ -586,7 +560,7 @@ class EditorInteractor(BaseAutomation):
 
     def _leer_linea_completa_mac(self) -> Optional[str]:
         # Cmd+L selecciona la línea lógica completa, incluso con ajuste visual de línea.
-        self._hotkey("command", "l")
+        self._hotkey(self.cmd_key, "l")
         actual = self._leer_seleccion_mac()
         self._press("left")
         if actual is not None:
@@ -596,12 +570,15 @@ class EditorInteractor(BaseAutomation):
         return actual
 
     def _guardar_linea_actual_mac(self):
-        if not self.is_mac or not self.bloque_actual:
+        if not (self.is_mac or self.is_windows) or not self.bloque_actual:
             return
         numero = self.inicio_bloque + self.indice_linea + 1
         actual = self._leer_linea_completa_mac()
         if actual is None:
             raise EditorNoDisponible("No se pudo guardar el estado de la línea reescrita")
+        esperada = self.bloque_actual[self.indice_linea][:self.desplazamiento]
+        if actual != esperada:
+            raise EditorNoDisponible("La línea cambió fuera de la escritura controlada; no se sobrescribirá")
         self._lineas_observadas[numero] = actual
 
     def _queda_tiempo_editor(self, tiempo_final: float) -> bool:
@@ -649,7 +626,7 @@ class EditorInteractor(BaseAutomation):
         if self._portapapeles_original is None:
             return
         try:
-            if self.leer_portapapeles() == self.portapapeles_bot["ultimo"]:
+            if self.portapapeles_es_del_bot(self.leer_portapapeles()):
                 self.copiar_al_portapapeles(self._portapapeles_original)
                 logging.info("Portapapeles del usuario restaurado")
         except Exception as e:
@@ -657,11 +634,15 @@ class EditorInteractor(BaseAutomation):
 
     def conservar_portapapeles_usuario(self):
         contenido = self.leer_portapapeles()
-        if contenido != self.portapapeles_bot["ultimo"]:
+        if self.portapapeles_es_del_bot(contenido):
+            self.portapapeles_bot['ultimo'] = contenido
+        else:
             self._portapapeles_original = contenido
+        self.portapapeles_bot.pop('copia_pendiente', None)
+        self.portapapeles_bot.pop('escritura_pendiente', None)
 
     def registrar_tiempo_interaccion(self, tiempo_inicio: float) -> None:
         """Registra el tiempo de interacción con el editor"""
-        tiempo_real = time.time() - tiempo_inicio
+        tiempo_real = time.monotonic() - tiempo_inicio
         self.stats_tracker.register_editor_session(tiempo_real)
         logging.info(f"Interacción con editor finalizada, duración real: {tiempo_real / 60:.1f} minutos")

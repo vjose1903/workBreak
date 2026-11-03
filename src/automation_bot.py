@@ -6,7 +6,7 @@ from typing import Optional
 
 import pyautogui
 
-from base_automation import FailsafeActivo
+from base_automation import FailsafeActivo, TiempoAgotado
 from editor_interactor import EditorInteractor, EditorNoDisponible
 from menu import (Configuracion, configuracion_desde_args, guardar_configuracion,
                   menu_interactivo)
@@ -74,18 +74,23 @@ class AutomationBot:
         fallos_consecutivos = 0
         ultimo_log = time.monotonic()
         monitor = MonitorActividad()
+        monitor.comprobar_emergencia = pyautogui.failSafeCheck
         self.editor_interactor.monitor_actividad = monitor
         self.web_interactor.monitor_actividad = monitor
         self.web_interactor.portapapeles_bot = self.editor_interactor.portapapeles_bot
         recuperar_editor = False
         recuperar_portapapeles = False
+        reintentar_desde = 0
 
         try:
             monitor.iniciar()
             self.editor_interactor.mantener_despierto_iniciar()
             while self._tiempo_restante() > 0:
                 try:
-                    monitor.comprobar()
+                    self.editor_interactor._antes_accion()
+                    if time.monotonic() < reintentar_desde:
+                        self.editor_interactor._esperar(max(0, min(0.1, reintentar_desde - time.monotonic())))
+                        continue
                     if recuperar_portapapeles:
                         self.editor_interactor.conservar_portapapeles_usuario()
                         recuperar_portapapeles = False
@@ -110,6 +115,9 @@ class AutomationBot:
                         break
                     logging.info("Diez segundos sin actividad del usuario; reanudando bot")
                     continue
+                except TiempoAgotado:
+                    logging.info("Tiempo total agotado; finalizando bot")
+                    break
                 except (pyautogui.FailSafeException, FailsafeActivo):
                     logging.warning("Failsafe activado (mouse en esquina); deteniendo el bot")
                     codigo_salida = 2
@@ -132,13 +140,18 @@ class AutomationBot:
                         logging.error("Demasiados fallos consecutivos (5); abortando ejecución")
                         codigo_salida = 1
                         break
-                    time.sleep(min(60, 2 ** fallos_consecutivos))
+                    reintentar_desde = time.monotonic() + min(60, 2 ** fallos_consecutivos)
 
                 if time.monotonic() - ultimo_log >= 300:
                     restante = self._tiempo_restante()
                     resto_str = f"{restante / 60:.1f} minutos" if restante != float("inf") else "indefinido"
                     logging.info(f"Bot activo; tiempo restante: {resto_str}")
                     ultimo_log = time.monotonic()
+        except TiempoAgotado:
+            logging.info("Tiempo total agotado; finalizando bot")
+        except (pyautogui.FailSafeException, FailsafeActivo):
+            logging.warning("Parada de emergencia durante la pausa; deteniendo bot")
+            codigo_salida = 2
         except KeyboardInterrupt:
             logging.info("Programa terminado por el usuario (Ctrl+C)")
             codigo_salida = 130
@@ -146,6 +159,8 @@ class AutomationBot:
             logging.error(f"No se pudo continuar la ejecución: {e}")
             codigo_salida = 1
         finally:
+            self.editor_interactor._limpiando = True
+            self.web_interactor._limpiando = True
             try:
                 self.editor_interactor.mantener_despierto_detener()
             except Exception as e:
@@ -159,6 +174,8 @@ class AutomationBot:
             monitor.detener()
             self.editor_interactor.monitor_actividad = None
             self.web_interactor.monitor_actividad = None
+            self.editor_interactor._limpiando = False
+            self.web_interactor._limpiando = False
             codigo_salida = self._imprimir_y_cerrar(codigo_salida)
 
         return codigo_salida

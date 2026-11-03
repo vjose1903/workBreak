@@ -185,6 +185,8 @@ def _config_a_dict(config: Configuracion) -> dict:
 
 def _dict_a_config(d: dict) -> Configuracion:
     """Reconstruye una configuración a partir de un registro del historial."""
+    if not _registro_valido(d):
+        raise ValueError("Configuración del historial inválida")
     if d.get("fuente_tipo") == "directorio" and d.get("directorio"):
         try:
             fuente = RealProjectSource(d["directorio"])
@@ -207,6 +209,23 @@ def _dict_a_config(d: dict) -> Configuracion:
     )
 
 
+def _registro_valido(registro) -> bool:
+    if not isinstance(registro, dict):
+        return False
+    browser = registro.get('browser')
+    paginas = registro.get('paginas', [])
+    tiempo = registro.get('tiempo')
+    fases = registro.get('fases', 'ambas')
+    return (
+        (browser is None or isinstance(browser, str) and browser in NAVEGADORES_VALIDOS)
+        and isinstance(paginas, list) and all(isinstance(p, str) for p in paginas)
+        and (tiempo is None or type(tiempo) is int and tiempo > 0)
+        and isinstance(fases, str) and fases in FASES_EDITOR
+        and isinstance(registro.get('fuente_descripcion', ''), str)
+        and (registro.get('directorio') is None or isinstance(registro['directorio'], str))
+    )
+
+
 def cargar_historial() -> list:
     """Lee las configuraciones de las últimas sesiones; crea el archivo si no existe."""
     try:
@@ -215,7 +234,13 @@ def cargar_historial() -> list:
             logging.info(f"Historial de configuraciones creado en {RUTA_HISTORIAL}")
             return []
         datos = json.loads(RUTA_HISTORIAL.read_text(encoding="utf-8"))
-        return datos if isinstance(datos, list) else []
+        if not isinstance(datos, list):
+            return []
+        validos = [registro for registro in datos if _registro_valido(registro)]
+        if len(validos) != len(datos):
+            logging.warning("Se descartaron registros inválidos del historial: %s", json.dumps({
+                'descartados': len(datos) - len(validos)}))
+        return validos[:MAX_HISTORIAL]
     except Exception as e:
         logging.warning(f"No se pudo leer el historial de configuraciones: {e}")
         return []

@@ -9,6 +9,14 @@ from user_activity import MonitorActividad, PausaPorActividad
 
 
 class MonitorActividadTest(unittest.TestCase):
+    def test_parada_emergencia_se_comprueba_durante_el_debounce(self):
+        monitor = MonitorActividad()
+        monitor.registrar()
+        monitor.comprobar_emergencia = MagicMock(side_effect=RuntimeError('emergencia'))
+        with self.assertRaisesRegex(RuntimeError, 'emergencia'):
+            monitor.esperar_inactividad()
+        monitor.comprobar_emergencia.assert_called_once()
+
     def test_sin_actividad_no_hay_pausa(self):
         MonitorActividad().comprobar()
 

@@ -1,12 +1,13 @@
 #!/usr/bin/env python3
-import pyautogui
 import time
 import logging
+import random
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 
-def test_pyautogui():
+def demostracion_manual():
     """Prueba básica de funcionalidad de pyautogui"""
+    import pyautogui
     print("Iniciando prueba de pyautogui...")
     print("Mueve el mouse a la esquina superior izquierda para activar failsafe si es necesario")
     print("Presiona Ctrl+C para cancelar")
@@ -27,28 +28,11 @@ def test_pyautogui():
         pyautogui.moveTo(center_x, center_y, duration=1)
         time.sleep(1)
         
-        # Hacer clic
-        print("Haciendo clic...")
-        pyautogui.click()
-        time.sleep(1)
-        
-        # Escribir texto
-        print("Escribiendo texto de prueba...")
-        pyautogui.write("Hola mundo - prueba de pyautogui", interval=0.1)
-        time.sleep(2)
-        
-        # Seleccionar todo y borrar
-        print("Seleccionando todo y borrando...")
-        pyautogui.hotkey('cmd', 'a')  # En Mac es cmd, en Windows sería ctrl
-        time.sleep(0.5)
-        pyautogui.press('backspace')
-        time.sleep(1)
-        
         # Mover mouse aleatoriamente
         print("Moviendo mouse aleatoriamente...")
         for i in range(5):
-            x_offset = pyautogui.randint(-50, 50)
-            y_offset = pyautogui.randint(-50, 50)
+            x_offset = random.randint(-50, 50)
+            y_offset = random.randint(-50, 50)
             pyautogui.moveRel(x_offset, y_offset, duration=0.3)
             time.sleep(0.5)
         
@@ -60,5 +44,8 @@ def test_pyautogui():
         print(f"Error durante la prueba: {e}")
 
 if __name__ == "__main__":
-    test_pyautogui()
+    import sys
+    if sys.argv[1:] != ['--mover-mouse']:
+        raise SystemExit('Uso manual: python test_pyautogui.py --mover-mouse')
+    demostracion_manual()
 

@@ -19,6 +19,7 @@ teclado = MagicMock()
 teclado.FailSafeException = FailSafeException
 teclado.size.return_value = (1920, 1080)
 with patch.dict(sys.modules, {'pyautogui': teclado}):
+    from base_automation import TiempoAgotado
     from editor_interactor import EditorInteractor, EditorNoDisponible
     from statistics_tracker import StatisticsTracker
     from web_interactor import WebInteractor
@@ -45,6 +46,17 @@ class AutomationSafetyTest(unittest.TestCase):
         captura = patch.object(self.editor, '_guardar_linea_actual_mac')
         captura.start()
         self.addCleanup(captura.stop)
+        insertar = patch.object(self.editor, '_insertar_caracter',
+                                side_effect=lambda c: self.editor._write(c, interval=0))
+        insertar.start()
+        self.addCleanup(insertar.stop)
+        rectangulo = patch.object(self.web, 'rectangulo_aplicacion', return_value=(0, 0, 1000, 800))
+        rectangulo.start()
+        self.addCleanup(rectangulo.stop)
+        for interactor in (self.editor, self.web):
+            version = patch.object(interactor, 'version_portapapeles', return_value=100)
+            version.start()
+            self.addCleanup(version.stop)
 
     def test_foco_anterior_no_evita_reactivacion(self):
         with patch.object(self.editor, 'activar_aplicacion', return_value=False) as activar:
@@ -113,30 +125,32 @@ class AutomationSafetyTest(unittest.TestCase):
         registrar.assert_called_once()
         self.assertIsNotNone(self.web._visita_restante)
 
-    def test_visita_intervenida_se_retoma_sin_abrir_ni_cerrar_pestanas(self):
+    def test_visita_intervenida_se_conserva_y_continua_en_otra(self):
         url = 'https://example.com'
         self.web._contexto = {'abierta': True, 'navegada': True, 'intervenida': True,
                               'pagina': url, 'url': url}
         with patch.object(self.web, 'activar_navegador', return_value=True), \
+                patch.object(self.web, 'copiar_al_portapapeles', return_value=True), \
                 patch.object(self.web, '_leer_url_actual', return_value=url), \
                 patch.object(self.web, 'interactuar_con_pagina', side_effect=[PausaPorActividad(), None]):
             with self.assertRaises(PausaPorActividad):
                 self.web._procesar_pagina(url)
             self.web._procesar_pagina(url)
-        teclado.hotkey.assert_not_called()
-        self.assertIsNotNone(self.web._contexto)
+        self.assertEqual(teclado.hotkey.call_args_list.count(unittest.mock.call(self.web.cmd_key, 't')), 2)
+        self.assertEqual(teclado.hotkey.call_args_list.count(unittest.mock.call(self.web.cmd_key, 'w')), 1)
 
     def test_otra_pestana_no_se_navega_ni_se_cierra(self):
         url = 'https://example.com'
         self.web._contexto = {'abierta': True, 'navegada': True, 'intervenida': True,
                               'pagina': url, 'url': url}
         with patch.object(self.web, 'activar_navegador', return_value=True), \
+                patch.object(self.web, 'copiar_al_portapapeles', return_value=True), \
                 patch.object(self.web, '_leer_url_actual', return_value='https://otro.example'), \
                 patch.object(self.web, 'interactuar_con_pagina') as interactuar:
-            with self.assertRaisesRegex(RuntimeError, 'pestaña cambió'):
-                self.web._procesar_pagina(url)
-        interactuar.assert_not_called()
-        teclado.hotkey.assert_not_called()
+            self.web._procesar_pagina(url)
+        interactuar.assert_called_once()
+        # Se abre la nueva pestaña antes de pegar o cerrar; la anterior se conserva.
+        self.assertEqual(teclado.hotkey.call_args_list[0], unittest.mock.call(self.web.cmd_key, 't'))
 
     def test_navegacion_pendiente_conserva_pestana_y_reintenta_en_otra(self):
         url = 'https://example.com'
@@ -221,7 +235,7 @@ class AutomationSafetyTest(unittest.TestCase):
                 self.editor.fases = modo
                 self.editor.lineas_actuales = ['codigo cargado']
                 with patch.object(self.editor, 'tiempo_restante', return_value=None), \
-                        patch('editor_interactor.time.monotonic', side_effect=[0, 0, 2]), \
+                        patch('editor_interactor.time.monotonic', side_effect=[0, 0, 0, 2, 2]), \
                         patch.object(self.editor, 'fase_escritura') as escribir, \
                         patch.object(self.editor, 'fase_mouse') as mover:
                     self.editor.interactuar_editor(duracion_maxima=1)
@@ -326,7 +340,7 @@ class AutomationSafetyTest(unittest.TestCase):
         ir.assert_not_called()
         self.assertEqual([c.args[0] for c in teclado.write.call_args_list], list('bc'))
 
-    def test_nueva_escritura_invalida_captura_antes_de_otra_pausa(self):
+    def test_nueva_escritura_actualiza_captura_antes_de_otra_pausa(self):
         self.editor.lineas_actuales = ['abc']
         self.editor.bloque_actual = ['abc']
         self.editor.inicio_bloque = 0
@@ -339,7 +353,7 @@ class AutomationSafetyTest(unittest.TestCase):
             with self.assertRaises(PausaPorActividad):
                 self.editor._escribir_siguiente_linea(float('inf'))
         self.assertEqual(self.editor.desplazamiento, 2)
-        self.assertNotIn(1, self.editor._lineas_observadas)
+        self.assertEqual(self.editor._lineas_observadas[1], 'ab')
         with patch.object(self.editor, '_leer_linea_completa_mac', return_value='ab'):
             self.editor._confirmar_linea_mac(1)
 
@@ -413,14 +427,16 @@ class AutomationSafetyTest(unittest.TestCase):
 
     def test_guarda_la_linea_real_para_la_siguiente_fase(self):
         self.editor.is_mac = True
-        self.editor.bloque_actual = ['return valor;']
+        self.editor.bloque_actual = ['    return valor;']
         self.editor.inicio_bloque = 3
         self.editor.indice_linea = 0
+        self.editor.desplazamiento = len('    return va')
         with patch.object(self.editor, '_leer_linea_completa_mac', return_value='    return va'):
             EditorInteractor._guardar_linea_actual_mac(self.editor)
         self.assertEqual(self.editor._lineas_observadas, {4: '    return va'})
 
     def test_lectura_selecciona_linea_completa_y_quita_solo_el_salto(self):
+        self.editor.cmd_key = 'command'
         with patch.object(self.editor, '_leer_seleccion_mac', return_value='  return valor;\n'):
             self.assertEqual(self.editor._leer_linea_completa_mac(), '  return valor;')
         teclado.hotkey.assert_called_once_with('command', 'l')
@@ -555,6 +571,93 @@ class AutomationSafetyTest(unittest.TestCase):
                 self.web._procesar_pagina('https://example.com')
         self.assertEqual(teclado.hotkey.call_args_list,
                          [unittest.mock.call(self.web.cmd_key, 't')])
+
+    def test_copia_pendiente_del_bot_no_reemplaza_portapapeles_original(self):
+        self.editor._portapapeles_original = 'usuario'
+        self.editor.portapapeles_bot.update(ultimo='marcador', copia_pendiente=100)
+        with patch.object(self.editor, 'leer_portapapeles', return_value='fragmento'), \
+                patch.object(self.editor, 'version_portapapeles', return_value=101):
+            self.editor.conservar_portapapeles_usuario()
+        self.assertEqual(self.editor._portapapeles_original, 'usuario')
+        self.assertEqual(self.editor.portapapeles_bot['ultimo'], 'fragmento')
+
+    def test_copia_del_usuario_posterior_a_la_del_bot_se_conserva(self):
+        self.editor._portapapeles_original = 'antiguo'
+        self.editor.portapapeles_bot.update(ultimo='marcador', copia_pendiente=100)
+        with patch.object(self.editor, 'leer_portapapeles', return_value='nuevo'), \
+                patch.object(self.editor, 'version_portapapeles', return_value=102):
+            self.editor.conservar_portapapeles_usuario()
+        self.assertEqual(self.editor._portapapeles_original, 'nuevo')
+
+    def test_prefijo_igual_no_autoriza_sobrescribir_cambios_del_usuario(self):
+        self.editor.lineas_actuales = ['return total;']
+        self.editor.bloque_actual = ['return total;']
+        self.editor.desplazamiento = 6
+        self.editor._lineas_observadas[1] = 'return'
+        with patch.object(self.editor, '_leer_linea_completa_mac', return_value='return secreto;'):
+            with self.assertRaises(EditorNoDisponible):
+                self.editor._confirmar_linea_mac(1)
+
+    def test_caracter_se_inserta_por_pegado_sin_autocierre(self):
+        with patch.object(self.editor, 'copiar_al_portapapeles', return_value=True) as copiar:
+            EditorInteractor._insertar_caracter(self.editor, '(')
+        copiar.assert_called_once_with('(')
+        teclado.hotkey.assert_called_once_with(self.editor.cmd_key, 'v')
+        teclado.write.assert_not_called()
+
+    def test_mouse_se_limita_al_area_segura_y_no_pulsa_fuera(self):
+        self.editor._area_mouse = (100, 200, 500, 600)
+        self.editor._move_to(2000, 0)
+        teclado.moveTo.assert_called_once_with(500, 200, duration=0)
+        teclado.position.return_value = (0, 0)
+        with self.assertRaisesRegex(RuntimeError, 'fuera del área'):
+            self.editor._click()
+        teclado.click.assert_not_called()
+
+    def test_turnos_web_conservan_paginas_pendientes(self):
+        self.web.set_paginas(['https://uno.example', 'https://dos.example', 'https://tres.example'])
+        visitadas = []
+        agotado = [False]
+
+        def procesar(pagina, _fin):
+            visitadas.append(pagina)
+            agotado[0] = True
+
+        with patch.object(self.web, '_procesar_pagina', side_effect=procesar), \
+                patch.object(self.web, '_queda_tiempo', side_effect=lambda _: not agotado[0]):
+            for _ in range(3):
+                agotado[0] = False
+                self.web.interactuar_web(30)
+        self.assertEqual(visitadas, self.web.paginas)
+        self.assertEqual(self.web._indice_pagina, 0)
+
+    def test_visita_agotada_no_contamina_la_siguiente(self):
+        self.web._visita_restante = 0
+        self.web.interactuar_con_pagina('https://example.com')
+        self.assertIsNone(self.web._visita_restante)
+        teclado.click.assert_not_called()
+
+    def test_pagina_no_iniciada_por_fin_de_turno_sigue_pendiente(self):
+        self.web.set_paginas(['https://uno.example', 'https://dos.example'])
+        with patch.object(self.web, '_procesar_pagina', return_value=False):
+            self.web.interactuar_web(30)
+        self.assertEqual(self.web._indice_pagina, 0)
+
+    def test_limite_agotado_impide_enviar_texto(self):
+        self.editor.set_limite_tiempo(0)
+        with self.assertRaises(TiempoAgotado):
+            self.editor._write('texto')
+        teclado.write.assert_not_called()
+
+    def test_proceso_con_entrada_no_la_reenvia_tras_timeout(self):
+        self.editor.monitor_actividad = MagicMock()
+        proceso = MagicMock()
+        proceso.returncode = 0
+        proceso.communicate.side_effect = [subprocess.TimeoutExpired('pbcopy', .02), (None, None)]
+        with patch('base_automation.subprocess.Popen', return_value=proceso):
+            self.editor._ejecutar_proceso(['pbcopy'], input='texto', text=True)
+        self.assertEqual(proceso.communicate.call_args_list[0].kwargs['input'], 'texto')
+        self.assertIsNone(proceso.communicate.call_args_list[1].kwargs['input'])
 
 
 if __name__ == '__main__':

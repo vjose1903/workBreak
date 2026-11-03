@@ -1,4 +1,6 @@
 #!/bin/bash
+set -e
+cd "$(dirname "$0")"
 
 echo "Detectando sistema operativo..."
 if [[ "$OSTYPE" == "darwin"* ]]; then

@@ -4,7 +4,6 @@ import subprocess
 import time
 import random
 from typing import Optional
-from urllib.parse import urlsplit
 from base_automation import BaseAutomation, FailsafeActivo
 from statistics_tracker import StatisticsTracker
 from user_activity import PausaPorActividad
@@ -76,6 +75,8 @@ class WebInteractor(BaseAutomation):
 
             logging.warning(f"Navegador {self.browser} no disponible y ya se intentó lanzar antes")
             return False
+        except pyautogui.FailSafeException:
+            raise
         except Exception as e:
             logging.error(f"Error activando navegador {self.browser}: {e}", exc_info=True)
             return False
@@ -108,67 +109,47 @@ class WebInteractor(BaseAutomation):
         tiempo_final = time.monotonic() + duracion if duracion is not None else float("inf")
         try:
             while self._indice_pagina < len(self.paginas) and self._queda_tiempo(tiempo_final):
-                self._procesar_pagina(self.paginas[self._indice_pagina], tiempo_final)
+                if self._procesar_pagina(self.paginas[self._indice_pagina], tiempo_final) is False:
+                    break
                 self._indice_pagina += 1
         except PausaPorActividad:
             self._turno_restante = max(0, tiempo_final - time.monotonic())
             raise
-        self._indice_pagina = 0
+        if self._indice_pagina >= len(self.paginas):
+            self._indice_pagina = 0
         self._turno_restante = None
-
-    @staticmethod
-    def _misma_url(primera, segunda):
-        def normalizar(url):
-            partes = urlsplit(url if "://" in url or url.startswith('about:') else "https://" + url)
-            return (partes.scheme.lower(), partes.netloc.lower(), partes.path.rstrip('/'),
-                    partes.query, partes.fragment)
-        return normalizar(primera) == normalizar(segunda)
 
     def _leer_url_actual(self):
         marcador = "workbreak:sin-url"
         if not self.copiar_al_portapapeles(marcador):
             raise RuntimeError("No se pudo comprobar la pestaña del navegador")
         self._hotkey(self.cmd_key, 'l')
-        self._hotkey(self.cmd_key, 'c')
-        self._esperar(0.15)
-        actual = self.leer_portapapeles()
-        self.portapapeles_bot['ultimo'] = actual
+        actual = self.copiar_seleccion()
         self._press('esc')
         if not actual or actual == marcador:
             raise RuntimeError("No se pudo leer la dirección de la pestaña")
         return actual
 
-    def _procesar_pagina(self, pagina, tiempo_final=float("inf")) -> None:
+    def _procesar_pagina(self, pagina, tiempo_final=float("inf")) -> Optional[bool]:
         """Conserva la visita en una pausa y nunca cierra una pestaña intervenida."""
         if self._contexto is None:
             self._contexto = {'abierta': False, 'navegada': False, 'intervenida': False,
                               'pagina': pagina, 'url': pagina}
         contexto = self._contexto
-        if contexto['intervenida'] and contexto.get('navegacion_pendiente'):
-            # Sin una URL confirmada no podemos identificar la pestaña tras la pausa.
-            # Conservarla y continuar en otra evita sobrescribir una pestaña del usuario.
-            logging.info("Navegación sin confirmar tras la pausa; se conserva la pestaña y se abre otra")
+        if contexto['intervenida']:
+            # La URL no identifica una pestaña: no reutilizar ninguna tras una pausa.
+            logging.info("Pausa web: se conserva la pestaña anterior y se continúa en una nueva")
             contexto = {'abierta': False, 'navegada': False, 'intervenida': False,
                         'pagina': pagina, 'url': pagina}
             self._contexto = contexto
         interrumpido = False
         try:
             if not self._queda_tiempo(tiempo_final):
-                return
+                return False
             if not self.activar_navegador():
                 raise RuntimeError("No se pudo activar el navegador")
             if not self._queda_tiempo(tiempo_final):
-                return
-
-            if contexto['abierta'] and contexto['intervenida']:
-                actual = self._leer_url_actual()
-                if contexto['navegada']:
-                    coincide = self._misma_url(actual, contexto['url'])
-                else:
-                    coincide = actual in ('about:blank', 'about:newtab', 'chrome://newtab/',
-                                          'edge://newtab/', 'opera://startpage/')
-                if not coincide:
-                    raise RuntimeError("La pestaña cambió durante la pausa; activa la pestaña del bot para continuar")
+                return False
 
             if not contexto['abierta']:
                 self._hotkey(self.cmd_key, 't')
@@ -177,14 +158,14 @@ class WebInteractor(BaseAutomation):
 
             if not contexto['navegada'] or contexto['pagina'] != pagina:
                 if not self._queda_tiempo(tiempo_final):
-                    return
+                    return False
                 if not self.copiar_al_portapapeles(pagina):
                     logging.error(f"No se pudo copiar la URL de {pagina}, se omite")
                     return
                 self._hotkey(self.cmd_key, 'l')
                 self._hotkey(self.cmd_key, 'v')
                 if not self._queda_tiempo(tiempo_final):
-                    return
+                    return False
                 contexto['navegacion_pendiente'] = True
                 self._press('return')
                 contexto.update(navegada=True, pagina=pagina, url=pagina)
@@ -207,6 +188,7 @@ class WebInteractor(BaseAutomation):
             raise
         finally:
             if contexto['abierta'] and not interrumpido and not contexto['intervenida']:
+                self._limpiando = True
                 try:
                     if self.activar_navegador():
                         self._hotkey(self.cmd_key, 'w')
@@ -215,10 +197,15 @@ class WebInteractor(BaseAutomation):
                 except PausaPorActividad:
                     contexto['intervenida'] = True
                     raise
+                finally:
+                    self._limpiando = False
 
     def interactuar_con_pagina(self, pagina, tiempo_turno=float("inf")):
         """Interactúa con una página abierta en el navegador"""
         duracion = self._visita_restante if self._visita_restante is not None else random.uniform(10, 20)
+        self._visita_restante = None
+        if duracion <= 0:
+            return
         restante = self.tiempo_restante()
         if restante is not None:
             duracion = min(duracion, restante)
@@ -229,8 +216,8 @@ class WebInteractor(BaseAutomation):
         try:
             if not self._queda_tiempo(tiempo_final):
                 return
-            center_x = self.screen_width // 2
-            center_y = self.screen_height // 2
+            config = self.browser_configs[self.browser]
+            center_x, center_y = self._configurar_area_mouse(self.rectangulo_aplicacion(config['mac']))
             self._move_to(center_x, center_y, duration=0.3)
             self._click()
 
@@ -250,7 +237,8 @@ class WebInteractor(BaseAutomation):
 
             self._visita_restante = None
         except PausaPorActividad:
-            self._visita_restante = max(0, tiempo_final - time.monotonic())
+            restante = max(0, tiempo_final - time.monotonic())
+            self._visita_restante = restante if restante > 0 else None
             raise
         except pyautogui.FailSafeException:
             logging.warning("Failsafe activado durante la navegación")
