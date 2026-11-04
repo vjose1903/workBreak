@@ -155,7 +155,7 @@ Al activar **Tiempo indefinido**, los campos se restablecen a `00` y quedan desh
 
 ### 📝 Fuente de código y acciones
 
-En **Configuración → Editor** o en el submenú **Editor** de la barra puedes elegir entre los editores compatibles instalados: **Visual Studio Code, Cursor, Windsurf y VS Code Insiders**. VS Code se selecciona por defecto si está instalado; se conserva tu elección guardada mientras siga disponible. WorkBreak abre un archivo temporal vacío; si activas **Escribir**, después coloca el código completo de la fuente seleccionada. Los archivos originales del directorio no se editan.
+En **Configuración → Editor** o en el submenú **Editor** de la barra puedes elegir entre los editores compatibles instalados: **Visual Studio Code, Cursor, Windsurf y VS Code Insiders**. VS Code se selecciona por defecto si está instalado; se conserva tu elección guardada mientras siga disponible. Para escribir, WorkBreak abre un espacio temporal independiente con ajustes de edición controlados; solo reutiliza una ventana existente cuando están desactivadas las acciones de escritura. Abre un archivo temporal vacío; si activas **Escribir**, después coloca el código completo de la fuente seleccionada. Los archivos originales del directorio no se editan.
 
 - **Código aleatorio:** genera contenido React/TypeScript.
 - **Directorio real:** busca archivos `.tsx`, `.jsx`, `.ts` y `.js` de **20 a 400 líneas**, excluyendo carpetas como `node_modules`, `dist` y `build`. La ruta elegida aparece en la pestaña Editor. Cada tres fases de escritura intenta cargar otro archivo, evitando repetir el anterior cuando hay alternativas válidas.
@@ -177,7 +177,7 @@ La reescritura envía eventos de teclado por carácter; no copia y pega cada let
 
 Los eventos siguen siendo **sintéticos**. WorkBreak no garantiza que Time Doctor u otro monitor los clasifique como actividad humana, ni que no genere alertas.
 
-En macOS utiliza la opción oficial **`code --goto archivo:línea:columna`** para navegar al archivo temporal, sin escribir coordenadas en el documento ni depender de atajos personalizados. Los atajos restantes se envían con modificadores explícitos y sin `Fn`. Si no puede confirmar el archivo temporal o el contenido esperado, detiene la edición para evitar sobrescribir cambios externos.
+Al iniciar cada corrida que usa el editor, y antes de enviar teclado o mouse, consulta una vez el atajo de **Ir a línea** en el menú del editor. En macOS espera a que el menú se estabilice durante la preparación. Conserva ese atajo durante la corrida y vuelve a consultarlo en el siguiente inicio; las pausas no lo recalculan. Si el menú no expone una combinación simple compatible o no puede identificarla, cancela la interacción en lugar de suponer un atajo. En Windows requiere un menú nativo que exponga el atajo; no presupone `Ctrl+G` si no puede consultarlo. En macOS la navegación comprueba que el panel Ir a línea está abierto antes de introducir el destino. Los atajos restantes se envían con modificadores explícitos y sin `Fn`. Si no puede confirmar el archivo temporal o el contenido esperado, detiene la edición para evitar sobrescribir cambios externos.
 
 ### 🖱️ Varios monitores
 

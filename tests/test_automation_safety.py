@@ -222,6 +222,7 @@ class AutomationSafetyTest(unittest.TestCase):
             getattr(teclado, nombre).reset_mock(side_effect=True)
         teclado.size.return_value = (1920, 1080)
         self.editor = EditorInteractor(StatisticsTracker())
+        self.editor.atajo_ir_linea = ('option', 'g')
         self.web = WebInteractor(StatisticsTracker())
         # Nunca enviar eventos Quartz reales, aunque las pruebas se ejecuten en un Mac.
         for interactor in (self.editor, self.web):
@@ -1313,6 +1314,7 @@ class AutomationSafetyTest(unittest.TestCase):
         self.editor.is_mac = True
         self.editor.cmd_key = 'command'
         self.editor.reutilizar_ventana = True
+        self.editor.atajo_ir_linea = ('option', 'g')
         self.editor.directorio_trabajo = '/tmp/workbreak_prueba'
         with patch.object(self.editor, 'ejecutar_comando') as comando, \
                 patch.object(self.editor, '_leer_seleccion_mac', return_value=':'), \
@@ -1335,13 +1337,41 @@ class AutomationSafetyTest(unittest.TestCase):
                 patch('editor_interactor.time.monotonic', side_effect=[0, 0, 0.5, 1.1]):
             self.assertIsNone(self.editor._leer_seleccion_mac())
 
-    def test_ventana_reutilizada_pega_cada_caracter_en_vez_de_teclearlo(self):
-        self.editor.reutilizar_ventana = True
-        with patch.object(self.editor, 'copiar_al_portapapeles', return_value=True) as copiar:
-            EditorInteractor._insertar_caracter(self.editor, '(')
-        copiar.assert_called_once_with('(')
-        teclado.hotkey.assert_called_once_with(self.editor.cmd_key, 'v')
+    def test_caracteres_se_teclean_sin_usar_portapapeles(self):
+        for reutilizar in (False, True):
+            self.editor.reutilizar_ventana = reutilizar
+            with patch.object(self.editor, 'copiar_al_portapapeles') as copiar, \
+                    patch.object(self.editor, '_write') as escribir:
+                self.editor._insertar_caracter('(')
+            escribir.assert_called_once_with('(')
+            copiar.assert_not_called()
+
+    def test_atajo_se_resuelve_una_vez_por_corrida(self):
+        self.editor.atajo_ir_linea = None
+        self.editor.editor_actual = 'vsCode'
+        with patch('editor_interactor.resolver_atajo', side_effect=[('option', 'g'), ('ctrl', 'l')]) as resolver:
+            self.editor._comprobar_atajo_corrida()
+            self.editor._comprobar_atajo_corrida()
+            self.assertEqual(resolver.call_count, 1)
+            self.assertEqual(self.editor.atajo_ir_linea, ('option', 'g'))
+            self.editor.atajo_ir_linea = None
+            self.editor._comprobar_atajo_corrida()
+            self.assertEqual(resolver.call_count, 2)
+            self.assertEqual(self.editor.atajo_ir_linea, ('ctrl', 'l'))
+
+    def test_sin_atajo_confirmado_no_se_envia_teclado(self):
+        self.editor.atajo_ir_linea = None
+        with self.assertRaises(EditorNoDisponible):
+            self.editor._ir_a_linea(25)
+        teclado.hotkey.assert_not_called()
         teclado.write.assert_not_called()
+
+    def test_archivo_windows_conserva_identidad_unica(self):
+        self.editor.is_windows = True
+        ruta = self.editor._crear_archivo_temporal('App.tsx')
+        self.assertTrue(os.path.basename(ruta).startswith('workbreak_'))
+        self.assertTrue(os.path.basename(ruta).endswith('_App.tsx'))
+        self.assertIn(os.path.basename(self.editor.directorio_trabajo), os.path.basename(ruta))
 
     def test_movimientos_del_bot_se_anuncian_al_monitor(self):
         self.editor.monitor_actividad = MagicMock()
@@ -1362,26 +1392,19 @@ class AutomationSafetyTest(unittest.TestCase):
             self.editor._llevar_mouse_al_editor()
         mover.assert_not_called()
 
-    def test_navegacion_nativa_no_escribe_coordenadas_en_el_editor(self):
+    def test_navegacion_usa_el_atajo_detectado_y_confirma_el_panel(self):
         self.editor.is_mac = True
-        self.editor.editor_actual = 'vsCode'
-        self.editor.directorio_trabajo = '/tmp/workbreak_prueba'
-        self.editor.ruta_archivo = '/tmp/workbreak_prueba/archivo.tsx'
-        with patch.object(self.editor, '_comando_abrir_editor', return_value=['code', self.editor.ruta_archivo]), \
-                patch.object(self.editor, 'ejecutar_comando', return_value=True) as ejecutar, \
+        self.editor.atajo_ir_linea = ('ctrl', 'l')
+        with patch.object(self.editor, '_leer_seleccion_mac', return_value=':'), \
                 patch.object(self.editor, '_confirmar_linea_mac') as confirmar:
             self.editor._ir_a_linea(25)
-        ejecutar.assert_called_once_with(['code', '--goto', '/tmp/workbreak_prueba/archivo.tsx:25:1'])
+        teclado.hotkey.assert_any_call('ctrl', 'l')
+        teclado.write.assert_called_once_with(':25:1', interval=0.03)
         confirmar.assert_called_once_with(25)
-        teclado.write.assert_not_called()
-        teclado.hotkey.assert_not_called()
 
     def test_error_navegando_no_autoriza_reescritura(self):
         self.editor.is_mac = True
-        self.editor.directorio_trabajo = '/tmp/workbreak_prueba'
-        self.editor.ruta_archivo = '/tmp/workbreak_prueba/archivo.tsx'
-        with patch.object(self.editor, '_comando_abrir_editor', return_value=['code', self.editor.ruta_archivo]), \
-                patch.object(self.editor, 'ejecutar_comando', return_value=False), \
+        with patch.object(self.editor, '_leer_seleccion_mac', return_value='codigo fuera del panel'), \
                 patch.object(self.editor, '_confirmar_linea_mac') as confirmar:
             with self.assertRaises(EditorNoDisponible):
                 self.editor._ir_a_linea(25)

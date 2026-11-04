@@ -190,6 +190,9 @@ class MonitorActividadTest(unittest.TestCase):
     def test_eventos_mac_del_bot_no_reinician_debounce(self):
         monitor = MonitorActividad()
         quartz = MagicMock()
+        quartz.CGEventSourceFlagsState.return_value = 0
+        for indice, nombre in enumerate(('Command', 'Control', 'Shift', 'Alternate', 'SecondaryFn')):
+            setattr(quartz, 'kCGEventFlagMask' + nombre, 1 << (indice + 16))
         tipos = ['KeyDown', 'KeyUp', 'FlagsChanged', 'MouseMoved', 'LeftMouseDown',
                  'LeftMouseUp', 'RightMouseDown', 'RightMouseUp', 'OtherMouseDown',
                  'OtherMouseUp', 'LeftMouseDragged', 'RightMouseDragged',
@@ -240,9 +243,43 @@ class MonitorActividadTest(unittest.TestCase):
         self.assertIn('causa: evento 5 del proceso 0', '\n'.join(registros.output))
 
 
+    def test_modificador_ya_mantenido_al_iniciar_se_registra_antes_del_bot(self):
+        monitor = MonitorActividad(margen_inicial=0)
+        monitor._detectar_desde = 0
+        quartz = MagicMock()
+        quartz.kCGEventFlagMaskCommand = 1 << 20
+        quartz.kCGEventFlagMaskControl = 1 << 18
+        quartz.kCGEventFlagMaskShift = 1 << 17
+        quartz.kCGEventFlagMaskAlternate = 1 << 19
+        quartz.kCGEventFlagMaskSecondaryFn = 1 << 23
+        quartz.CGEventSourceFlagsState.return_value = quartz.kCGEventFlagMaskShift
+        quartz.CGEventSourceKeyState.return_value = False
+        quartz.CGEventSourceButtonState.return_value = False
+        quartz.CFRunLoopRunInMode.side_effect = lambda *_: monitor._detener.set()
+        with patch.dict(sys.modules, {'Quartz': quartz}):
+            monitor._escuchar_mac()
+        self.assertIn(('modificador', 1 << 17), monitor._pulsadas)
+        with self.assertRaises(PausaPorActividad):
+            monitor.comprobar()
+        # Los flags de un atajo sintético posterior no borran la pulsación física inicial.
+        quartz.CGEventSourceFlagsState.return_value = 0
+        self.assertTrue(monitor._esta_pulsada(('modificador', 1 << 17)))
+        quartz.kCGEventFlagsChanged = 'flags'
+        quartz.kCGEventSourceUnixProcessID = 'pid'
+        quartz.kCGKeyboardEventKeycode = 'codigo'
+        quartz.CGEventGetIntegerValueField.side_effect = lambda evento, campo: evento[campo]
+        quartz.CGEventGetFlags.return_value = 0
+        callback = quartz.CGEventTapCreate.call_args.args[4]
+        callback(None, 'flags', {'pid': os.getpid() + 1, 'codigo': 0x38}, None)
+        self.assertNotIn(('modificador', 1 << 17), monitor._pulsadas)
+        self.assertFalse(monitor._esta_pulsada(('modificador', 1 << 17)))
+
     def test_modificadores_que_dejan_los_atajos_del_bot_no_cuentan_como_pulsados(self):
         monitor = MonitorActividad()
         quartz = MagicMock()
+        quartz.CGEventSourceFlagsState.return_value = 0
+        for indice, nombre in enumerate(('Command', 'Control', 'Shift', 'Alternate', 'SecondaryFn')):
+            setattr(quartz, 'kCGEventFlagMask' + nombre, 1 << (indice + 16))
         quartz.CFRunLoopRunInMode.side_effect = lambda *_: monitor._detener.set()
         # macOS reporta ⌘ izquierdo (55) pulsado tras un atajo del bot; Enter (36) sí es real.
         quartz.CGEventSourceKeyState.side_effect = lambda _estado, codigo: codigo in (36, 55)

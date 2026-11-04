@@ -16,6 +16,7 @@ from code_source import RealProjectSource
 from statistics_tracker import StatisticsTracker
 from menu import acciones_config
 from editor_catalog import EDITORES, binario_editor
+from editor_shortcut import resolver_atajo
 
 
 class EditorNoDisponible(Exception):
@@ -68,6 +69,7 @@ class EditorInteractor(BaseAutomation):
         self.reutilizar_ventana = False
         self._resincronizaciones = 0
         self._codigo_pendiente = None
+        self.atajo_ir_linea = None
 
     def validar_editor(self, value: str) -> str:
         """Valida que el editor esté en la lista de editores válidos"""
@@ -125,12 +127,14 @@ class EditorInteractor(BaseAutomation):
     def _crear_archivo_temporal(self, nombre: str = 'index.tsx') -> str:
         """Crea un archivo vacío con el nombre indicado en la carpeta temporal de la sesión.
 
-        El nombre puede repetirse con archivos del usuario: la identidad de la pestaña se
-        confirma por su ruta completa (ver `_asegurar_destino`).
+        En macOS se confirma la ruta completa. En Windows el nombre incluye una
+        identidad de sesión, porque la comprobación del título no proporciona la ruta.
         """
         if self.directorio_trabajo is None:
             self._crear_directorio_trabajo()
         carpeta = Path(self.directorio_trabajo)
+        if self.is_windows:
+            nombre = f'workbreak_{carpeta.name}_{nombre}'
         ruta, numero = carpeta / nombre, 2
         while ruta.exists():
             ruta = carpeta / str(numero) / nombre
@@ -206,9 +210,11 @@ class EditorInteractor(BaseAutomation):
 
         try:
             # El primer código se elige antes de abrir para que la pestaña lleve su nombre.
-            self._codigo_pendiente = self._obtener_codigo()
+            acciones = acciones_config({'fases': self.fases, 'acciones_editor': self.acciones}, 'editor')
+            if acciones['escribir']:
+                self._codigo_pendiente = self._obtener_codigo()
             self.ruta_archivo = self._crear_archivo_temporal(self._nombre_archivo_codigo())
-            self.reutilizar_ventana = self._editor_tiene_ventana(editor)
+            self.reutilizar_ventana = not acciones['escribir'] and self._editor_tiene_ventana(editor)
             if self.reutilizar_ventana:
                 logging.info("Hay una ventana del editor abierta; el archivo del bot se abre en ella")
 
@@ -225,8 +231,9 @@ class EditorInteractor(BaseAutomation):
             self._esperar(1)
 
             self.editor_actual = efectivo
+            self.EDITOR_ABIERTO = True  # Una pausa en la preparación debe recuperar esta misma ventana.
+            self._comprobar_atajo_corrida()
             self._asegurar_destino()
-            self.EDITOR_ABIERTO = True
             self._llevar_mouse_al_editor()
         except (EditorNoDisponible, pyautogui.FailSafeException):
             raise
@@ -258,8 +265,22 @@ class EditorInteractor(BaseAutomation):
             self.abrir_editor(editor)
             return
 
+        self._comprobar_atajo_corrida()
         self._asegurar_destino()
         self._llevar_mouse_al_editor()
+
+    def _comprobar_atajo_corrida(self):
+        if self.atajo_ir_linea is not None:
+            return
+        if not self._esperar_editor_al_frente(self.EDITOR_INFO[self.editor_actual]):
+            raise EditorNoDisponible("No se pudo consultar el atajo: el editor no está al frente")
+        try:
+            self.atajo_ir_linea = resolver_atajo(self.editor_actual, self._ejecutar_proceso)
+        except (ValueError, OSError, subprocess.SubprocessError) as error:
+            detalle = getattr(error, 'stderr', None) or str(error)
+            raise EditorNoDisponible("No se pudo determinar el atajo Ir a línea antes de interactuar: " + detalle.strip()) from error
+        logging.info("Atajo Ir a línea de esta corrida: %s", json.dumps({
+            "editor": self.editor_actual, "atajo": self.atajo_ir_linea}, ensure_ascii=False))
 
     def _editor_tiene_ventana(self, editor: str) -> bool:
         """True si el editor ya tiene alguna ventana (también minimizada o en otro escritorio)."""
@@ -654,13 +675,6 @@ class EditorInteractor(BaseAutomation):
         self._resincronizaciones = 0
 
     def _insertar_caracter(self, caracter):
-        if self.reutilizar_ventana:
-            # En una ventana del usuario rigen sus ajustes: autocierre, etiquetas JSX y
-            # sugerencias que se aceptan con «(» o «.». Pegar el carácter no los activa.
-            if not self.copiar_al_portapapeles(caracter):
-                raise EditorNoDisponible("No se pudo preparar el carácter a escribir")
-            self._hotkey(self.cmd_key, 'v')
-            return
         self._write(caracter)
 
     def _max_bloque_segun_tamano(self) -> int:
@@ -741,23 +755,9 @@ class EditorInteractor(BaseAutomation):
 
     def _ir_a_linea(self, numero: int) -> None:
         """Navega al archivo controlado y confirma la línea antes de editarla."""
-        # En una ventana del usuario `code --goto --reuse-window` no mueve el cursor del
-        # archivo ya abierto: se usa el panel Ir a línea dentro del editor.
-        if self.is_mac and self.directorio_trabajo and not self.reutilizar_ventana:
-            cmd = self._comando_abrir_editor(self.editor_actual, self.ruta_archivo)
-            if not cmd:
-                raise EditorNoDisponible('No se pudo preparar la navegación al archivo temporal')
-            cmd.insert(1, '--goto')
-            cmd[-1] = f'{self.ruta_archivo}:{numero}:1'
-            if not self.ejecutar_comando(cmd):
-                raise EditorNoDisponible('No se pudo navegar a la línea del archivo temporal')
-            self._esperar(0.2)
-            self._confirmar_linea_mac(numero)
-            return
-        if self.is_mac:
-            self._hotkey("option", "g")
-        else:
-            self._hotkey("ctrl", "g")
+        if self.atajo_ir_linea is None:
+            raise EditorNoDisponible("El atajo Ir a línea no se comprobó al iniciar la corrida")
+        self._hotkey(*self.atajo_ir_linea)
         self._esperar(0.2)
         if self.is_mac:
             # Seleccionar/copiar no modifica el archivo si el panel no se abrió.
@@ -866,7 +866,10 @@ class EditorInteractor(BaseAutomation):
         else:
             codigo = self._obtener_codigo()
             nombre = self._nombre_archivo_codigo()
-            if self.EDITOR_ABIERTO and self.ruta_archivo and nombre != os.path.basename(self.ruta_archivo):
+            actual = os.path.basename(self.ruta_archivo or '')
+            if self.is_windows and self.directorio_trabajo:
+                actual = actual.removeprefix(f'workbreak_{Path(self.directorio_trabajo).name}_')
+            if self.EDITOR_ABIERTO and self.ruta_archivo and nombre != actual:
                 self._cambiar_archivo(nombre)
 
         if not self.copiar_al_portapapeles(codigo):

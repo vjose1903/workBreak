@@ -216,6 +216,7 @@ class MonitorActividad:
 
     def _escuchar_mac(self):
         import Quartz as q
+        modificadores_usuario = set()
 
         def esta_pulsada(identificador):
             tipo, codigo = identificador
@@ -223,7 +224,7 @@ class MonitorActividad:
                 return q.CGEventSourceKeyState(q.kCGEventSourceStateHIDSystemState, codigo)
             if tipo == 'mouse':
                 return q.CGEventSourceButtonState(q.kCGEventSourceStateHIDSystemState, codigo)
-            return bool(q.CGEventSourceFlagsState(q.kCGEventSourceStateHIDSystemState) & codigo)
+            return codigo in modificadores_usuario
 
         self._esta_pulsada = esta_pulsada
         def pulsadas_fisicas():
@@ -267,9 +268,13 @@ class MonitorActividad:
                                 0x3B: q.kCGEventFlagMaskControl, 0x3E: q.kCGEventFlagMaskControl,
                                 0x3F: q.kCGEventFlagMaskSecondaryFn}
                     mascara = mascaras.get(codigo)
-                    self.registrar(('modificador', mascara) if mascara is not None else None,
-                                   bool(q.CGEventGetFlags(evento) & mascara) if mascara is not None else None,
-                                   causa)
+                    pulsada = bool(q.CGEventGetFlags(evento) & mascara) if mascara is not None else None
+                    if mascara is not None:
+                        if pulsada:
+                            modificadores_usuario.add(mascara)
+                        else:
+                            modificadores_usuario.discard(mascara)
+                    self.registrar(('modificador', mascara) if mascara is not None else None, pulsada, causa)
                 elif tipo in (q.kCGEventLeftMouseDown, q.kCGEventLeftMouseUp,
                                q.kCGEventRightMouseDown, q.kCGEventRightMouseUp,
                                q.kCGEventOtherMouseDown, q.kCGEventOtherMouseUp):
@@ -290,6 +295,14 @@ class MonitorActividad:
         self._runloop = q.CFRunLoopGetCurrent()
         q.CFRunLoopAddSource(self._runloop, fuente, q.kCFRunLoopCommonModes)
         q.CGEventTapEnable(tap, True)
+        # Muestrear antes de dar permiso al bot para enviar atajos: no confundir sus
+        # flags sintéticos posteriores con modificadores ya mantenidos por el usuario.
+        flags_iniciales = q.CGEventSourceFlagsState(q.kCGEventSourceStateHIDSystemState)
+        for mascara in (q.kCGEventFlagMaskCommand, q.kCGEventFlagMaskControl,
+                        q.kCGEventFlagMaskShift, q.kCGEventFlagMaskAlternate, q.kCGEventFlagMaskSecondaryFn):
+            if flags_iniciales & mascara:
+                modificadores_usuario.add(mascara)
+                self.registrar(('modificador', mascara), True, 'modificador mantenido al iniciar')
         self._listo.set()
         try:
             while not self._detener.is_set():

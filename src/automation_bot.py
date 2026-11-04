@@ -78,6 +78,7 @@ class AutomationBot:
         guardar_configuracion(config)
         self._modo = config.modo if editor_activo and web_activa else ('editor' if editor_activo else 'web')
         self._turno_actual = "web" if self._modo == "web" else "editor"
+        self.editor_interactor.atajo_ir_linea = None  # Cada inicio vuelve a consultar; las pausas no.
         self.editor_interactor.acciones = dict(config.acciones_editor)
         self.web_interactor.acciones = dict(config.acciones_web)
         self.editor_interactor.fases = config.fases
