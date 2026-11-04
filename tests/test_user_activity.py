@@ -308,11 +308,12 @@ class MonitorActividadTest(unittest.TestCase):
         self.assertTrue(monitor._esta_pulsada(('modificador', 1 << 17)))
         quartz.kCGEventFlagsChanged = 'flags'
         quartz.kCGEventSourceUnixProcessID = 'pid'
+        quartz.kCGEventSourceUserData = 'marca'
         quartz.kCGKeyboardEventKeycode = 'codigo'
         quartz.CGEventGetIntegerValueField.side_effect = lambda evento, campo: evento[campo]
         quartz.CGEventGetFlags.return_value = 0
         callback = quartz.CGEventTapCreate.call_args.args[4]
-        callback(None, 'flags', {'pid': os.getpid() + 1, 'codigo': 0x38}, None)
+        callback(None, 'flags', {'pid': os.getpid() + 1, 'codigo': 0x38, 'marca': 0}, None)
         self.assertNotIn(('modificador', 1 << 17), monitor._pulsadas)
         self.assertFalse(monitor._esta_pulsada(('modificador', 1 << 17)))
 
