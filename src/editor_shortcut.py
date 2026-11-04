@@ -49,10 +49,20 @@ def resolver_atajo_mac(bundle, ejecutar):
         set inicio to current date
         set desde to inicio
         set anterior to ""
+        set ultimoError to ""
+        set ultimoCodigo to 0
         repeat
             set actual to ""
             try
                 set actual to my leerAtajo(item 1 of argv)
+                set ultimoError to ""
+                set ultimoCodigo to 0
+            on error mensaje number codigo
+                set ultimoError to mensaje
+                set ultimoCodigo to codigo
+                if codigo is -1743 or codigo is -25211 or codigo is -10004 then
+                    error ("macOS rechazó el acceso al menú del editor: " & mensaje & ". Revisa Accesibilidad y Automatización de WorkBreak en Privacidad y seguridad.") number codigo
+                end if
             end try
             set ahora to current date
             if actual is not anterior then
@@ -60,7 +70,12 @@ def resolver_atajo_mac(bundle, ejecutar):
                 set anterior to actual
             end if
             if actual is not "" and (ahora - inicio) ≥ 5 and (ahora - desde) ≥ 2 then return actual
-            if (ahora - inicio) ≥ 15 then error "El menú Ir a línea no expone un atajo estable y compatible"
+            if (ahora - inicio) ≥ 15 then
+                if ultimoError is not "" then
+                    error ("No se pudo consultar Ir a línea. Último error (" & ultimoCodigo & "): " & ultimoError)
+                end if
+                error ("El atajo Ir a línea no se estabilizó. Último valor leído: " & anterior)
+            end if
             delay 0.25
         end repeat
     end run'''.replace('TITULOS', titulos)
