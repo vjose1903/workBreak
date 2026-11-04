@@ -338,7 +338,9 @@ class EditorInteractor(BaseAutomation):
             elif self.is_mac:
                 # La ruta del documento (AXDocument) distingue el archivo del bot de uno del
                 # usuario con el mismo nombre.
+                self._antes_accion()
                 documento = documento_editor(EDITORES[self.editor_actual]['bundle'])
+                self._antes_accion()
                 if not _misma_ruta(documento, self.ruta_archivo):
                     raise EditorNoDisponible("El archivo del bot no está activo; se cancela la entrada")
                 return

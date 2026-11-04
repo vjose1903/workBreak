@@ -893,17 +893,26 @@ class AutomationSafetyTest(unittest.TestCase):
         self.editor.is_windows = False
         self.editor.is_mac = True
         self.editor.editor_actual = 'vsCode'
-        with patch.object(self.editor, '_ejecutar_proceso', side_effect=PausaPorActividad):
+        with patch.object(self.editor, '_antes_accion', side_effect=PausaPorActividad), \
+                patch('mac_accessibility.rectangulo_aplicacion') as consultar:
             with self.assertRaises(PausaPorActividad):
                 self.editor._rectangulo_ventana_editor()
+        consultar.assert_not_called()
 
     def test_consulta_titulo_editor_es_interrumpible(self):
         self.editor.is_windows = False
         self.editor.is_mac = True
         self.editor.editor_actual = 'vsCode'
         self.editor.ruta_archivo = '/tmp/workbreak_unico.tsx'
+        monitor = MagicMock()
+        self.editor.monitor_actividad = monitor
+
+        def leer_documento(_bundle):
+            monitor.comprobar.side_effect = PausaPorActividad
+            return 'file:///tmp/workbreak_unico.tsx'
+
         with patch.object(self.editor, '_activar_si_necesario', return_value=True), \
-                patch.object(self.editor, '_ejecutar_proceso', side_effect=PausaPorActividad):
+                patch.object(editor_interactor, 'documento_editor', side_effect=leer_documento):
             with self.assertRaises(PausaPorActividad):
                 self.editor._asegurar_destino()
 

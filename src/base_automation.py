@@ -260,13 +260,16 @@ class BaseAutomation:
         return ((izquierda + derecha) // 2, (arriba + abajo) // 2)
 
     def rectangulo_aplicacion(self, nombre_mac):
+        self._antes_accion()
         if self.is_windows:
             import win32gui
             x, y, derecha, abajo = win32gui.GetWindowRect(win32gui.GetForegroundWindow())
             return x, y, derecha - x, abajo - y
         if self.is_mac:
             from mac_accessibility import rectangulo_aplicacion
-            return rectangulo_aplicacion(nombre_mac)
+            resultado = rectangulo_aplicacion(nombre_mac)
+            self._antes_accion()
+            return resultado
         return None
 
     def identidad_ventana_activa(self):
