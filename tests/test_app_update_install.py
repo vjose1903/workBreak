@@ -9,15 +9,17 @@ from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / 'src'))
 from app_update_install import preparar_descarga, ActualizacionCancelada, limpiar_descarga, crear_script_instalacion, instalar_y_reiniciar
-from app_version import APP_ID, GITHUB_REPO
+from app_version import APP_ID, GITHUB_REPO, VERSION, version_numerica
 
 
 class InstalacionTest(unittest.TestCase):
     def datos(self):
         contenido = b'dmg de prueba'
-        return contenido, {'version': '1.2.3', 'bytes': len(contenido),
+        mayor, menor, parche = version_numerica(VERSION)
+        version = f'{mayor}.{menor}.{parche + 1}'
+        return contenido, {'version': version, 'bytes': len(contenido),
             'sha256': hashlib.sha256(contenido).hexdigest(),
-            'url': f'https://github.com/{GITHUB_REPO}/releases/download/v1.2.3/WorkBreak-1.2.3-macos-arm64.dmg'}
+            'url': f'https://github.com/{GITHUB_REPO}/releases/download/v{version}/WorkBreak-{version}-macos-arm64.dmg'}
 
     def preparar(self, nueva, contenido, cancelar=None, identificador=APP_ID):
         respuesta = io.BytesIO(contenido)
@@ -28,13 +30,13 @@ class InstalacionTest(unittest.TestCase):
                 destino = Path(args[-1])
                 destino.mkdir()
                 (destino / 'PackageInfo').write_text(
-                    f'<pkg-info identifier="{identificador}" version="1.2.3" install-location="/Applications"/>')
+                    f'<pkg-info identifier="{identificador}" version="{nueva["version"]}" install-location="/Applications"/>')
             return subprocess.CompletedProcess(args, 0)
 
         def ejecutar(args, **kwargs):
             if '-mountpoint' in args:
                 montaje = Path(args[args.index('-mountpoint') + 1])
-                (montaje / 'WorkBreak-1.2.3-macos-arm64.pkg').write_bytes(b'pkg')
+                (montaje / f"WorkBreak-{nueva['version']}-macos-arm64.pkg").write_bytes(b'pkg')
             return proceso(args, **kwargs)
 
         with patch('app_update_install.platform.machine', return_value='arm64'), \
@@ -89,7 +91,6 @@ class InstalacionTest(unittest.TestCase):
         lanzar.assert_not_called()
 
     def test_no_admite_instalar_version_actual_o_anterior(self):
-        from app_version import VERSION
         contenido, nueva = self.datos()
         for version in (VERSION, '0.0.0'):
             with self.subTest(version=version), self.assertRaisesRegex(ValueError, 'posterior'):
