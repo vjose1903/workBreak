@@ -1342,14 +1342,14 @@ class AutomationSafetyTest(unittest.TestCase):
             self.editor.reutilizar_ventana = reutilizar
             with patch.object(self.editor, 'copiar_al_portapapeles') as copiar, \
                     patch.object(self.editor, '_write') as escribir:
-                self.editor._insertar_caracter('(')
+                EditorInteractor._insertar_caracter(self.editor, '(')
             escribir.assert_called_once_with('(')
             copiar.assert_not_called()
 
     def test_atajo_se_resuelve_una_vez_por_corrida(self):
         self.editor.atajo_ir_linea = None
         self.editor.editor_actual = 'vsCode'
-        with patch('editor_interactor.resolver_atajo', side_effect=[('option', 'g'), ('ctrl', 'l')]) as resolver:
+        with patch.object(editor_interactor, 'resolver_atajo', side_effect=[('option', 'g'), ('ctrl', 'l')]) as resolver:
             self.editor._comprobar_atajo_corrida()
             self.editor._comprobar_atajo_corrida()
             self.assertEqual(resolver.call_count, 1)
