@@ -2,7 +2,6 @@ import logging
 import json
 import os
 import platform
-import re
 import random
 import subprocess
 import time
@@ -266,16 +265,8 @@ class BaseAutomation:
             x, y, derecha, abajo = win32gui.GetWindowRect(win32gui.GetForegroundWindow())
             return x, y, derecha - x, abajo - y
         if self.is_mac:
-            resultado = self._ejecutar_proceso(
-                ['osascript', '-e',
-                 f'set appBundleId to id of application "{nombre_mac}"\n'
-                 'tell application "System Events"\n'
-                 'tell (first application process whose bundle identifier is appBundleId)\n'
-                 'get {position, size} of front window\nend tell\nend tell'],
-                capture_output=True, text=True, check=True, timeout=5)
-            numeros = re.findall(r'-?\d+', resultado.stdout)
-            if len(numeros) == 4:
-                return tuple(map(int, numeros))
+            from mac_accessibility import rectangulo_aplicacion
+            return rectangulo_aplicacion(nombre_mac)
         return None
 
     def identidad_ventana_activa(self):
@@ -350,32 +341,15 @@ class BaseAutomation:
         return self.activar_aplicacion(nombre_proceso, nombre_mac)
 
     def _activar_aplicacion_mac(self, nombre_mac: str) -> bool:
-        """Activa la app en macOS vía System Events, con fallback a 'activate'"""
+        """Activa la aplicación desde el proceso autorizado de WorkBreak."""
+        from mac_accessibility import activar_aplicacion
+        self._antes_accion()
         try:
-            self._ejecutar_proceso(
-                ['osascript', '-e',
-                 f'set appBundleId to id of application "{nombre_mac}"\n'
-                 'tell application "System Events"\n'
-                 'set frontmost of (first application process whose bundle identifier is appBundleId) to true\n'
-                 'end tell'],
-                check=True,
-                capture_output=True
-            )
-            logging.debug(f"Aplicación activada en macOS (frontmost): {nombre_mac}")
-            return True
-        except subprocess.CalledProcessError:
-            self._antes_accion()
-            try:
-                self._ejecutar_proceso(
-                    ['osascript', '-e', f'tell application "{nombre_mac}" to activate'],
-                    check=True,
-                    capture_output=True
-                )
-                logging.debug(f"Aplicación activada en macOS (activate): {nombre_mac}")
-                return True
-            except subprocess.CalledProcessError as e:
-                logging.error(f"Error activando la aplicación en macOS ({nombre_mac}): {e}")
-                return False
+            return activar_aplicacion(nombre_mac)
+        except ValueError as error:
+            logging.error("Error activando aplicación: %s", json.dumps({
+                "aplicacion": nombre_mac, "error": str(error)}, ensure_ascii=False))
+            return False
 
     def _activar_aplicacion_windows(self, nombre_proceso: str) -> bool:
         """Activa una ventana perteneciente al ejecutable solicitado."""

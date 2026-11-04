@@ -1,4 +1,5 @@
 import os
+from pathlib import Path
 import subprocess
 import sys
 import tempfile
@@ -226,6 +227,10 @@ class AutomationSafetyTest(unittest.TestCase):
         locale_hijo.start()
         self.addCleanup(locale_hijo.stop)
         self.editor = EditorInteractor(StatisticsTracker())
+        documento = patch.object(editor_interactor, 'documento_editor',
+                                 side_effect=lambda _bundle: Path(self.editor.ruta_archivo).as_uri())
+        documento.start()
+        self.addCleanup(documento.stop)
         self.editor.atajo_ir_linea = ('option', 'g')
         self.web = WebInteractor(StatisticsTracker())
         # Nunca enviar eventos Quartz reales, aunque las pruebas se ejecuten en un Mac.
@@ -757,31 +762,17 @@ class AutomationSafetyTest(unittest.TestCase):
                                      'psutil': psutil}):
             self.assertTrue(self.web._activar_aplicacion_windows('chrome.exe'))
 
-    def test_verificacion_mac_utiliza_bloques_applescript_completos(self):
+    def test_verificacion_mac_consulta_documento_del_editor_seleccionado(self):
         self.editor.editor_actual = 'vsCode'
         self.editor.ruta_archivo = '/tmp/workbreak_unico.tsx'
         self.editor.is_windows = False
         self.editor.is_mac = True
         self.editor.cmd_key = 'command'
-        resultado = SimpleNamespace(stdout='file:///tmp/workbreak_unico.tsx\n')
         with patch.object(self.editor, '_activar_si_necesario', return_value=True), \
-                patch('editor_interactor.subprocess.run', return_value=resultado) as ejecutar:
+                patch.object(editor_interactor, 'documento_editor',
+                             return_value='file:///tmp/workbreak_unico.tsx') as documento:
             self.editor._asegurar_destino()
-        script = ejecutar.call_args.args[0][2]
-        self.assertEqual(script.splitlines(), [
-            'set appBundleId to id of application "Visual Studio Code"',
-            'tell application "System Events"',
-            'tell (first application process whose bundle identifier is appBundleId)',
-            'if frontmost is false then error "Editor sin foco"',
-            'set documento to ""',
-            'try',
-            'set documento to value of attribute "AXDocument" of front window',
-            'end try',
-            'if documento is missing value then set documento to ""',
-            'return documento',
-            'end tell',
-            'end tell',
-        ])
+        documento.assert_called_once_with('com.microsoft.VSCode')
 
     def test_archivo_del_usuario_con_el_mismo_nombre_no_se_acepta(self):
         self.editor.editor_actual = 'vsCode'
@@ -791,8 +782,7 @@ class AutomationSafetyTest(unittest.TestCase):
         for documento in ('file:///Users/yo/proyecto/src/useCanvasFonts.ts', '', 'missing value'):
             with self.subTest(documento=documento), \
                     patch.object(self.editor, '_activar_si_necesario', return_value=True), \
-                    patch('editor_interactor.subprocess.run',
-                          return_value=SimpleNamespace(stdout=documento, returncode=0)):
+                    patch.object(editor_interactor, 'documento_editor', return_value=documento):
                 with self.assertRaisesRegex(EditorNoDisponible, 'no está activo'):
                     self.editor._asegurar_destino()
 
@@ -849,9 +839,9 @@ class AutomationSafetyTest(unittest.TestCase):
         self.editor.ruta_archivo = '/tmp/workbreak_unico.tsx'
         self.editor.is_windows = False
         self.editor.is_mac = True
-        error = subprocess.CalledProcessError(1, 'osascript', stderr='Acceso denegado (-1743)')
+        error = ValueError('Acceso denegado: error de accesibilidad -25211')
         with patch.object(self.editor, '_activar_si_necesario', return_value=True), \
-                patch('editor_interactor.subprocess.run', side_effect=error):
+                patch.object(editor_interactor, 'documento_editor', side_effect=error):
             with self.assertRaisesRegex(EditorNoDisponible, 'Acceso denegado'):
                 self.editor._asegurar_destino()
         self.assertNotIn(unittest.mock.call('command', 'a'), teclado.hotkey.call_args_list)

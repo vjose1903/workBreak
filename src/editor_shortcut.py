@@ -2,6 +2,9 @@
 import ctypes
 import re
 import sys
+import time
+
+from mac_accessibility import leer_atajo, PermisoAccesibilidad
 
 
 TITULOS_IR_LINEA = (
@@ -15,76 +18,32 @@ def _es_ir_linea(titulo):
     return titulo in {t.casefold() for t in TITULOS_IR_LINEA}
 
 
-def resolver_atajo_mac(bundle, ejecutar):
-    # El menú lo resuelve el propio editor: incluye perfil, extensiones y personalizaciones.
-    titulos = ', '.join('"' + t + '"' for t in TITULOS_IR_LINEA)
-    script = '''on leerAtajo(bundleId)
-        tell application "System Events"
-            tell (first application process whose bundle identifier is bundleId)
-                set barra to first menu bar item of menu bar 1 whose name is "Go" or name is "Ir"
-                set titulos to name of every menu item of menu 1 of barra
-                set indice to 0
-                set coincidencias to 0
-                repeat with n from 1 to count titulos
-                    set titulo to item n of titulos
-                    if titulo is not missing value then
-                        repeat with esperado in {TITULOS}
-                            if titulo is (esperado as text) or titulo is ((esperado as text) & "…") or titulo is ((esperado as text) & "...") then
-                                set indice to n
-                                set coincidencias to coincidencias + 1
-                            end if
-                        end repeat
-                    end if
-                end repeat
-                if coincidencias is not 1 then error "No se pudo identificar un único comando Ir a línea en el menú"
-                set entrada to menu item indice of menu 1 of barra
-                set letra to value of attribute "AXMenuItemCmdChar" of entrada
-                set modificadores to value of attribute "AXMenuItemCmdModifiers" of entrada
-                if letra is missing value or letra is "" then error "Ir a línea no tiene un atajo simple disponible"
-                return letra & tab & (modificadores as text)
-            end tell
-        end tell
-    end leerAtajo
-    on run argv
-        set inicio to current date
-        set desde to inicio
-        set anterior to ""
-        set ultimoError to ""
-        set ultimoCodigo to 0
-        repeat
-            set actual to ""
-            try
-                set actual to my leerAtajo(item 1 of argv)
-                set ultimoError to ""
-                set ultimoCodigo to 0
-            on error mensaje number codigo
-                set ultimoError to mensaje
-                set ultimoCodigo to codigo
-                if codigo is -1743 or codigo is -25211 or codigo is -10004 then
-                    error ("macOS rechazó el acceso al menú del editor: " & mensaje & ". Revisa Accesibilidad y Automatización de WorkBreak en Privacidad y seguridad.") number codigo
-                end if
-            end try
-            set ahora to current date
-            if actual is not anterior then
-                set desde to ahora
-                set anterior to actual
-            end if
-            if actual is not "" and (ahora - inicio) ≥ 5 and (ahora - desde) ≥ 2 then return actual
-            if (ahora - inicio) ≥ 15 then
-                if ultimoError is not "" then
-                    error ("No se pudo consultar Ir a línea. Último error (" & ultimoCodigo & "): " & ultimoError)
-                end if
-                error ("El atajo Ir a línea no se estabilizó. Último valor leído: " & anterior)
-            end if
-            delay 0.25
-        end repeat
-    end run'''.replace('TITULOS', titulos)
-    resultado = ejecutar(['osascript', '-e', script, bundle], capture_output=True,
-                         text=True, check=True, timeout=20)
-    partes = resultado.stdout.strip().split('\t')
-    if len(partes) != 2 or len(partes[0]) != 1:
+def resolver_atajo_mac(bundle, esperar):
+    # Esperar a que el editor termine de cargar sus atajos y personalizaciones.
+    inicio = desde = time.monotonic()
+    anterior = None
+    ultimo_error = ''
+    while True:
+        try:
+            actual = leer_atajo(bundle, _es_ir_linea)
+            ultimo_error = ''
+        except PermisoAccesibilidad:
+            raise
+        except ValueError as error:
+            actual = None
+            ultimo_error = str(error)
+        ahora = time.monotonic()
+        if actual != anterior:
+            anterior, desde = actual, ahora
+        if actual and ahora - inicio >= 5 and ahora - desde >= 2:
+            break
+        if ahora - inicio >= 15:
+            raise ValueError(ultimo_error or 'El atajo Ir a línea no se estabilizó')
+        esperar(0.25)
+    caracter, mascara = actual
+    if len(caracter) != 1:
         raise ValueError('El editor no expone un atajo simple para Ir a línea')
-    letra, mascara = partes[0].lower(), int(partes[1])
+    letra = caracter.lower()
     if mascara < 0 or mascara > 15:
         raise ValueError('El atajo de Ir a línea usa modificadores no compatibles')
     from mac_keyboard import MacKeyboard
@@ -131,10 +90,10 @@ def resolver_atajo_windows():
     return tuple(atajo.split('+'))
 
 
-def resolver_atajo(editor, ejecutar):
+def resolver_atajo(editor, esperar):
     if sys.platform == 'darwin':
         from editor_catalog import EDITORES
-        return resolver_atajo_mac(EDITORES[editor]['bundle'], ejecutar)
+        return resolver_atajo_mac(EDITORES[editor]['bundle'], esperar)
     if sys.platform == 'win32':
         return resolver_atajo_windows()
     raise ValueError('La detección del atajo requiere macOS o Windows')

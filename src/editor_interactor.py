@@ -17,6 +17,7 @@ from statistics_tracker import StatisticsTracker
 from menu import acciones_config
 from editor_catalog import EDITORES, binario_editor
 from editor_shortcut import resolver_atajo
+from mac_accessibility import documento_editor
 
 
 class EditorNoDisponible(Exception):
@@ -275,7 +276,7 @@ class EditorInteractor(BaseAutomation):
         if not self._esperar_editor_al_frente(self.EDITOR_INFO[self.editor_actual]):
             raise EditorNoDisponible("No se pudo consultar el atajo: el editor no está al frente")
         try:
-            self.atajo_ir_linea = resolver_atajo(self.editor_actual, self._ejecutar_proceso)
+            self.atajo_ir_linea = resolver_atajo(self.editor_actual, self._esperar)
         except (ValueError, OSError, subprocess.SubprocessError) as error:
             detalle = getattr(error, 'stderr', None) or str(error)
             raise EditorNoDisponible("No se pudo determinar el atajo Ir a línea antes de interactuar: " + detalle.strip()) from error
@@ -337,21 +338,8 @@ class EditorInteractor(BaseAutomation):
             elif self.is_mac:
                 # La ruta del documento (AXDocument) distingue el archivo del bot de uno del
                 # usuario con el mismo nombre.
-                resultado = self._ejecutar_proceso(
-                    ["osascript", "-e",
-                     f'set appBundleId to id of application "{info["mac"]}"\n'
-                     'tell application "System Events"\n'
-                     'tell (first application process whose bundle identifier is appBundleId)\n'
-                     'if frontmost is false then error "Editor sin foco"\n'
-                     'set documento to ""\n'
-                     'try\n'
-                     'set documento to value of attribute "AXDocument" of front window\n'
-                     'end try\n'
-                     'if documento is missing value then set documento to ""\n'
-                     'return documento\nend tell\nend tell'],
-                    capture_output=True, text=True, check=True, timeout=5,
-                )
-                if not _misma_ruta(resultado.stdout.strip(), self.ruta_archivo):
+                documento = documento_editor(EDITORES[self.editor_actual]['bundle'])
+                if not _misma_ruta(documento, self.ruta_archivo):
                     raise EditorNoDisponible("El archivo del bot no está activo; se cancela la entrada")
                 return
             else:
