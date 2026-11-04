@@ -91,7 +91,12 @@ def main():
     salida.mkdir(exist_ok=True)
     icono = generar_icono(trabajo)
     permisos = trabajo / 'entitlements.plist'
-    permisos.write_bytes(plistlib.dumps({'com.apple.security.automation.apple-events': True}))
+    # PyObjC genera callbacks nativos; libffi de Intel no utiliza MAP_JIT.
+    entitlements = {'com.apple.security.automation.apple-events': True,
+                    'com.apple.security.cs.allow-jit': True}
+    if arquitectura == 'x86_64':
+        entitlements['com.apple.security.cs.allow-unsigned-executable-memory'] = True
+    permisos.write_bytes(plistlib.dumps(entitlements))
     ejecutar(sys.executable, '-m', 'PyInstaller', '--noconfirm', '--clean', '--windowed', '--onedir',
              '--name', 'WorkBreak', '--osx-bundle-identifier', APP_ID, '--icon', icono,
              '--codesign-identity', identidad, '--osx-entitlements-file', permisos,
@@ -105,9 +110,9 @@ def main():
                 LSUIElement=True, LSMinimumSystemVersion='15.0', NSRequiresAquaSystemAppearance=False,
                 NSAppleEventsUsageDescription='WorkBreak necesita activar y verificar el editor y el navegador para realizar las interacciones configuradas.')
     plist.write_bytes(plistlib.dumps(info))
-    firma = ['codesign', '--force', '--deep', '--sign', identidad]
+    firma = ['codesign', '--force', '--deep', '--sign', identidad, '--entitlements', permisos]
     if identidad != '-':
-        firma += ['--timestamp', '--options', 'runtime', '--entitlements', permisos]
+        firma += ['--timestamp', '--options', 'runtime']
     ejecutar(*firma, app)
     ejecutar('codesign', '--verify', '--deep', '--strict', app)
     if identidad != '-':
@@ -117,6 +122,11 @@ def main():
                 or f'Identifier={APP_ID}' not in firma_real.splitlines()
                 or f'Authority={identidad}' not in firma_real.splitlines()):
             raise RuntimeError('La identidad de la app firmada no coincide con el equipo configurado')
+    permisos_firmados = subprocess.run(
+        ['codesign', '-d', '--entitlements', ':-', str(app)],
+        capture_output=True, check=True).stdout
+    if plistlib.loads(permisos_firmados) != entitlements:
+        raise RuntimeError('Los permisos del ejecutable firmado no coinciden con los requeridos por PyObjC')
     comprobacion = trabajo / 'package-check.json'
     subprocess.run([str(app / 'Contents/MacOS/WorkBreak'), '--comprobar-paquete', str(comprobacion)],
                    check=True, timeout=60)

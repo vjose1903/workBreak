@@ -289,6 +289,8 @@ python3.12 -m venv .venv-build
 
 Se generan archivos `dist/WorkBreak-X.Y.Z-macos-ARQUITECTURA.dmg`, `.pkg` y `.sha256`. La arquitectura depende del Python utilizado: **los instaladores no son universales**. Usa un entorno nativo ARM para Apple Silicon y uno Intel para `x86_64`.
 
+La firma mantiene Hardened Runtime y declara los permisos de generación de callbacks de PyObjC: `allow-jit` y, en Intel, `allow-unsigned-executable-memory`. El build comprueba que esos permisos estén presentes en la firma final antes de probar el arranque.
+
 El build verifica la firma estructural y ejecuta una comprobación del binario: interfaz, icono, recursos, certificados HTTPS e importación de la automatización en un proceso separado, sin enviar teclado, mouse ni conectar con la red. `--no-migrate` omite la migración del historial local.
 
 ### 🏷️ Crear una versión y publicarla
