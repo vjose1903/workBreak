@@ -67,6 +67,7 @@ class EditorInteractor(BaseAutomation):
         self._duracion_archivo = None
         self.EDITOR_INFO = EDITORES
         # True si al iniciar ya había una ventana del editor: el archivo se abre en ella.
+        self.rango_duracion = (60, 240)
         self.reutilizar_ventana = False
         self._resincronizaciones = 0
         self._codigo_pendiente = None
@@ -407,13 +408,10 @@ class EditorInteractor(BaseAutomation):
             logging.info("Tiempo restante agotado; se omite la interacción con el editor")
             return
 
-        if tiempo_restante is None:
-            duracion = random.uniform(60, 240)
-        else:
-            duracion = min(random.uniform(60, 240), tiempo_restante)
-
-        if duracion_maxima is not None:
-            duracion = min(duracion, duracion_maxima)
+        duracion = (random.uniform(*self.rango_duracion) if duracion_maxima is None
+                    else duracion_maxima)
+        if tiempo_restante is not None:
+            duracion = min(duracion, tiempo_restante)
 
         tiempo_final = time.monotonic() + duracion
 

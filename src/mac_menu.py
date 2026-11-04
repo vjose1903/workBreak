@@ -1,5 +1,6 @@
 """Interfaz nativa de la barra de menús de macOS."""
 import os
+from timing_config import temporizacion_config, texto_tiempo, TITULOS
 import copy
 import fcntl
 import hashlib
@@ -35,6 +36,51 @@ from menu import Configuracion, MODOS_INTERACCION, NAVEGADORES_VALIDOS, formatea
 
 def normalizar_webs(texto):
     return list(dict.fromkeys(normalizar_web(entrada) for entrada in texto.replace('\n', ',').split(',') if entrada.strip()))
+
+
+class DialogoSegundos(NSObject):
+    @objc.python_method
+    def mostrar(self, clave, valores):
+        actuales = temporizacion_config(valores)
+        valor = actuales[clave]
+        numeros = [valor] if clave == 'debounce' else valor
+        alerta = NSAlert.alloc().init()
+        alerta.setMessageText_(TITULOS[clave])
+        alerta.setInformativeText_(
+            'Segundos sin actividad antes de reanudar. 0 reanuda al soltar las teclas o botones.'
+            if clave == 'debounce' else
+            'Duración aleatoria en segundos por turno. Usa el mismo mínimo y máximo para una duración fija. '
+            'Las pausas y la preparación de la aplicación pueden alargar el tiempo transcurrido.')
+        alerta.addButtonWithTitle_('Guardar')
+        alerta.addButtonWithTitle_('Cancelar')
+        vista = NSView.alloc().initWithFrame_(((0, 0), (360, 110)))
+        campos = []
+        for indice, numero in enumerate(numeros):
+            titulo = 'Segundos' if clave == 'debounce' else ('Mínimo', 'Máximo')[indice]
+            x = indice * 180
+            etiqueta = NSTextField.labelWithString_(titulo)
+            etiqueta.setFrame_(((x, 78), (160, 22)))
+            vista.addSubview_(etiqueta)
+            campo = NSTextField.alloc().initWithFrame_(((x, 42), (160, 30)))
+            campo.setStringValue_(f'{numero:g}')
+            campo.setAccessibilityLabel_(titulo + ' en segundos')
+            vista.addSubview_(campo)
+            campos.append(campo)
+        error = NSTextField.wrappingLabelWithString_('')
+        error.setFrame_(((0, 0), (360, 36)))
+        error.setTextColor_(NSColor.systemRedColor())
+        vista.addSubview_(error)
+        alerta.setAccessoryView_(vista)
+        NSApplication.sharedApplication().activateIgnoringOtherApps_(True)
+        alerta.window().setInitialFirstResponder_(campos[0])
+        while alerta.runModal() == 1000:
+            try:
+                nuevos = [float(str(c.stringValue()).strip().replace(',', '.')) for c in campos]
+                return temporizacion_config({**actuales, clave: nuevos[0] if clave == 'debounce' else nuevos})
+            except ValueError:
+                error.setStringValue_('Usa segundos válidos, mínimo mayor que 0 y máximo ≥ mínimo.'
+                                      if clave != 'debounce' else 'Usa segundos válidos, mayores o iguales a 0.')
+        return None
 
 
 class DialogoTiempo(NSObject):
@@ -336,6 +382,7 @@ class MenuWorkBreak(NSObject):
         self._estaba_activo = False
         self.timer = None
         self.item_barra = None
+        self.notificador = None
         return self
 
     def applicationDidFinishLaunching_(self, _notificacion):
@@ -444,6 +491,9 @@ class MenuWorkBreak(NSObject):
             ruta = self.config.get('directorio', '')
             self.item(fuente, Path(ruta).name, 'fuente:directorio', marcado=True).setToolTip_(ruta)
 
+        for clave in ('editor', 'editor_alternado'):
+            self.item(editores, TITULOS[clave] + '… (' + texto_tiempo(clave, self.config.get('temporizacion')) + ')',
+                      'temporizacion:' + clave)
         editores.addItem_(NSMenuItem.separatorItem())
         instalados = editores_instalados()
         for clave, titulo in instalados.items():
@@ -460,6 +510,8 @@ class MenuWorkBreak(NSObject):
         item_webs = self.item(navegadores, f"Webs… ({len(self.config.get('paginas', []))})", 'webs')
         self.config_items.append(item_webs)
         self.config_web_items.append(item_webs)
+        self.item(navegadores, 'Duración del turno… (' + texto_tiempo('navegador', self.config.get('temporizacion')) + ')',
+                  'temporizacion:navegador')
         navegadores.addItem_(NSMenuItem.separatorItem())
         self.item(navegadores, 'Ninguno', 'browser:', self.config.get('browser') is None)
         for navegador in NAVEGADORES_VALIDOS:
@@ -475,6 +527,9 @@ class MenuWorkBreak(NSObject):
             valores = acciones_config(self.config, entorno)
             for clave, etiqueta in opciones.items():
                 self.item(acciones, etiqueta, f'accion:{entorno}:{clave}', valores[clave])
+
+        self.config_items.append(self.item(menu, 'Pausa por inactividad… (' + texto_tiempo(
+            'debounce', self.config.get('temporizacion')) + ')', 'temporizacion:debounce'))
 
         recientes, item = self.submenu(menu, 'Configuraciones recientes')
         self.config_items.append(item)
@@ -507,6 +562,11 @@ class MenuWorkBreak(NSObject):
     @objc.python_method
     def actualizar(self, _timer):
         self.controlador.actualizar()
+        avisos = self.controlador.avisos_pendientes
+        self.controlador.avisos_pendientes = []
+        if not self.saliendo:
+            for titulo, mensaje in avisos:
+                self.notificar_detencion(titulo, mensaje)
         pendientes = self.controlador.permisos_pendientes
         if pendientes:
             self.controlador.permisos_pendientes = []
@@ -580,6 +640,27 @@ class MenuWorkBreak(NSObject):
         alerta.setInformativeText_(mensaje)
         alerta.addButtonWithTitle_('Aceptar')
         alerta.runModal()
+
+    @objc.python_method
+    def preparar_notificaciones(self):
+        if self.notificador is not None or not getattr(sys, 'frozen', False):
+            return
+        try:
+            from mac_notifications import Notificador
+            self.notificador = Notificador.alloc().init()
+            self.notificador.solicitar_permiso()
+        except Exception:
+            self.notificador = None  # El aviso dentro de la app sigue disponible.
+
+    @objc.python_method
+    def notificar_detencion(self, titulo, mensaje):
+        if self.notificador is None:
+            self.aviso(titulo, mensaje)
+            return
+        try:
+            self.notificador.enviar(titulo, mensaje, self.aviso)
+        except Exception:
+            self.aviso(titulo, mensaje)
 
     @objc.python_method
     def mostrar_permisos(self, faltantes):
@@ -691,6 +772,7 @@ class MenuWorkBreak(NSObject):
                 if faltantes:
                     self.mostrar_permisos(faltantes)
                     return
+                self.preparar_notificaciones()
                 self.controlador.iniciar(self.config)
             else:
                 self.configurar(comando)
@@ -732,6 +814,13 @@ class MenuWorkBreak(NSObject):
             if paginas is not None:
                 config['paginas'] = paginas
                 config['nombres_web'] = dict(dialogo.nombres)
+        elif comando.startswith('temporizacion:'):
+            clave = comando.split(':', 1)[1]
+            if clave not in TITULOS:
+                raise ValueError('Temporización desconocida')
+            valores = DialogoSegundos.alloc().init().mostrar(clave, config.get('temporizacion'))
+            if valores is not None:
+                config['temporizacion'] = valores
         elif comando == 'tiempo':
             dialogo = DialogoTiempo.alloc().init()
             dialogo.preparar(config.get('tiempo'))

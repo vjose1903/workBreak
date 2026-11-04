@@ -1,4 +1,5 @@
 import argparse
+from timing_config import temporizacion_config
 import logging
 import random
 import time
@@ -21,6 +22,7 @@ class AutomationBot:
         self.stats_tracker = StatisticsTracker()
         self.editor_interactor = EditorInteractor(self.stats_tracker)
         self.web_interactor = WebInteractor(self.stats_tracker)
+        self.temporizacion = temporizacion_config()
         self._modo = "ambos"
         self._turno_actual = "editor"
         self.solicitar_detencion = solicitar_detencion
@@ -76,6 +78,8 @@ class AutomationBot:
         """Gestiona la ejecución del bot con resiliencia; devuelve el código de salida"""
         editor_activo, web_activa = validar_acciones_ejecucion(_config_a_dict(config))
         guardar_configuracion(config)
+        self.temporizacion = temporizacion_config(config.temporizacion)
+        self.editor_interactor.rango_duracion = self.temporizacion['editor']
         self._modo = config.modo if editor_activo and web_activa else ('editor' if editor_activo else 'web')
         self._turno_actual = "web" if self._modo == "web" else "editor"
         self.editor_interactor.atajo_ir_linea = None  # Cada inicio vuelve a consultar; las pausas no.
@@ -100,6 +104,7 @@ class AutomationBot:
         fallos_consecutivos = 0
         ultimo_log = time.monotonic()
         monitor = MonitorActividad(
+            debounce=self.temporizacion['debounce'],
             solicitar_detencion=self.solicitar_detencion,
             informar_pausa=lambda segundos, pulsada: self._notificar_estado(
                 'pausado', segundos=segundos, pulsada=pulsada))
@@ -140,12 +145,12 @@ class AutomationBot:
                     self.editor_interactor.necesita_reposicionar = True
                     recuperar_editor = True
                     recuperar_portapapeles = True
-                    logging.info("Actividad del usuario: bot pausado hasta completar 10 segundos de inactividad")
+                    logging.info("Actividad del usuario: bot pausado hasta completar %g segundos de inactividad", monitor.debounce)
                     limite = self.editor_interactor._tiempo_limite_absoluto
                     if not monitor.esperar_inactividad(limite=limite):
                         logging.info("Tiempo total agotado durante la pausa; finalizando bot")
                         break
-                    logging.info("Diez segundos sin actividad del usuario; reanudando bot")
+                    logging.info("%g segundos sin actividad del usuario; reanudando bot", monitor.debounce)
                     self._notificar_estado('ejecutando', fase=self._turno_actual)
                     continue
                 except TiempoAgotado:
@@ -231,18 +236,18 @@ class AutomationBot:
         """
         if self._modo == "web":
             self._notificar_estado("ejecutando", fase="navegador")
-            self.web_interactor.interactuar_web(duracion_maxima=random.uniform(30, 60))
+            self.web_interactor.interactuar_web(duracion_maxima=random.uniform(*self.temporizacion['navegador']))
             return
         if self._turno_actual == "editor":
             self.editor_interactor.asegurar_editor_abierto(editor)
             if paginas:
-                self.editor_interactor.interactuar_editor(duracion_maxima=random.uniform(30, 90))
+                self.editor_interactor.interactuar_editor(duracion_maxima=random.uniform(*self.temporizacion['editor_alternado']))
                 self._turno_actual = "web"
             else:
                 self.editor_interactor.interactuar_editor()
         if paginas and self._turno_actual == "web":
             self._notificar_estado('ejecutando', fase='navegador')
-            self.web_interactor.interactuar_web(duracion_maxima=random.uniform(30, 60))
+            self.web_interactor.interactuar_web(duracion_maxima=random.uniform(*self.temporizacion['navegador']))
             self._turno_actual = "editor"
 
     def ejecutar(self, argv=None) -> int:

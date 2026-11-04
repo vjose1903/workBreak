@@ -191,7 +191,20 @@ La detección nativa reconoció cuatro monitores en el entorno de desarrollo. El
 
 Al pulsar **Iniciar bot**, la interfaz comprueba Accesibilidad y Monitorización de entrada. Si faltan, muestra un aviso con botones para abrir los paneles correspondientes y no inicia la sesión. El proceso del bot vuelve a comprobarlos antes de cargar fuentes o interactuar; si su autorización difiere, también lo comunica a la interfaz. Tras concederlos, vuelve a pulsar Iniciar bot; puede ser necesario reiniciar WorkBreak si macOS lo solicita.
 
-**Al usar tu teclado o mouse, el bot cede el control.** Cualquier tecla, incluidos los modificadores, activa la pausa desde el inicio. Después del margen inicial del mouse, cualquier movimiento, clic o scroll reinicia una pausa de **10 segundos desde la última actividad**. Si sigues utilizando la PC, la cuenta vuelve a empezar; si mantienes una tecla o botón pulsado, la espera comienza cuando lo sueltas.
+La app instalada solicita permiso para notificaciones al iniciar el bot. Si la corrida termina por un error, una parada de emergencia o una salida inesperada del proceso, muestra una notificación con sonido y una indicación para consultar el registro. No notifica pausas por actividad, paradas manuales ni finalizaciones normales. Si las notificaciones están denegadas o falla el envío, muestra un aviso dentro de WorkBreak. La presentación de banners y sonidos depende de la configuración de notificaciones y de Concentración de macOS.
+
+Los tiempos se guardan en las preferencias y en las configuraciones recientes. Se editan en segundos desde **Configuración → Actividad → Pausa por inactividad**, **Configuración → Editor** y **Configuración → Navegador**, o desde los controles equivalentes del menú principal y sus submenús.
+
+| Parámetro | Predeterminado |
+|---|---|
+| Inactividad antes de reanudar (debounce) | 10 s |
+| Turno del editor sin navegador | 60–240 s |
+| Turno del editor al alternar con navegador | 30–90 s |
+| Turno del navegador | 30–60 s |
+
+Los rangos admiten decimales, requieren mínimo mayor que cero y máximo mayor o igual al mínimo. Un rango con valores iguales fija la duración. Debounce admite cero. Los cambios se aplican en la siguiente corrida; la configuración se bloquea mientras el bot está activo. Los rangos controlan los turnos de cada aplicación, incluyendo las acciones habilitadas; la preparación, las pausas y una operación ya iniciada pueden prolongar el tiempo de reloj. Las subfases internas de escritura y mouse conservan sus duraciones, limitadas por el final del turno.
+
+**Al usar tu teclado o mouse, el bot cede el control.** Cualquier tecla, incluidos los modificadores, activa la pausa desde el inicio. Después del margen inicial del mouse, cualquier movimiento, clic o scroll reinicia la pausa de inactividad configurada (**10 segundos por defecto**). Si sigues utilizando la PC, la cuenta vuelve a empezar; si mantienes una tecla o botón pulsado, la espera comienza cuando lo sueltas.
 
 - **Primeros 5 segundos:** solo el mouse tiene margen de gracia para evitar la pausa por el clic de inicio. El teclado pausa desde el primer momento, también al pulsar Command sin otra tecla.
 - **Durante la pausa:** el menú muestra el estado y la cuenta atrás; el registro informa los reinicios y la reanudación. Sus propios eventos no reinician la espera.

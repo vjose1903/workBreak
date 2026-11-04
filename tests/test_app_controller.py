@@ -54,6 +54,41 @@ class ControladorBotTest(unittest.TestCase):
         editores.start()
         self.addCleanup(editores.stop)
 
+    def test_notifica_una_vez_error_emergencia_o_salida_inesperada(self):
+        for codigo in (1, 2, None):
+            with self.subTest(codigo=codigo), tempfile.TemporaryDirectory() as carpeta:
+                controlador = ControladorBot(ruta_log=Path(carpeta) / 'log')
+                controlador.proceso = MagicMock()
+                controlador.proceso.is_alive.return_value = False
+                controlador.proceso.exitcode = codigo or 0
+                controlador.eventos = queue.Queue()
+                if codigo is not None:
+                    controlador.eventos.put({'tipo': 'finalizado', 'codigo': codigo})
+                controlador.actualizar()
+                controlador.actualizar()
+                self.assertEqual(len(controlador.avisos_pendientes), 1)
+                self.assertEqual(controlador.estado['estado'], 'error')
+                if codigo == 2:
+                    self.assertIn('emergencia', controlador.avisos_pendientes[0][0])
+
+    def test_no_notifica_parada_manual_fin_normal_ni_permiso_ya_avisado(self):
+        for caso in ('manual', 'normal', 'permisos'):
+            with self.subTest(caso=caso), tempfile.TemporaryDirectory() as carpeta:
+                controlador = ControladorBot(ruta_log=Path(carpeta) / 'log')
+                controlador.proceso = MagicMock()
+                controlador.proceso.is_alive.return_value = False
+                controlador.proceso.exitcode = 0
+                controlador.eventos = queue.Queue()
+                controlador.deteniendo = caso == 'manual'
+                if caso == 'permisos':
+                    controlador.eventos.put({'tipo': 'permisos', 'faltantes': ['entrada']})
+                if caso != 'manual':
+                    controlador.eventos.put({'tipo': 'finalizado', 'codigo': 1 if caso == 'permisos' else 0})
+                controlador.actualizar()
+                controlador.permisos_pendientes = []
+                controlador.actualizar()
+                self.assertEqual(controlador.avisos_pendientes, [])
+
     def test_sin_editor_instalado_no_crea_proceso(self):
         controlador = ControladorBot()
         with patch('app_controller.sys.platform', 'darwin'), \

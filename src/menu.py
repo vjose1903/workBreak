@@ -1,4 +1,5 @@
 import json
+from timing_config import temporizacion_config, temporizacion_valida
 import logging
 import os
 import tempfile
@@ -99,8 +100,10 @@ class Configuracion:
     nombres_web: dict = field(default_factory=dict)
     acciones_editor: Optional[dict] = None
     acciones_web: Optional[dict] = None
+    temporizacion: dict = field(default_factory=dict)
 
     def __post_init__(self):
+        self.temporizacion = temporizacion_config(self.temporizacion)
         if self.editor not in EDITORES:
             raise ValueError("Editor no compatible")
         if not tiempo_valido(self.tiempo):
@@ -129,6 +132,7 @@ class Configuracion:
             f"  Fuente código : {self.fuente_descripcion}\n"
             f"  Acciones editor: {', '.join(t for k, t in ACCIONES_EDITOR.items() if self.acciones_editor[k]) or 'Ninguna'}\n"
             f"  Acciones web  : {', '.join(t for k, t in ACCIONES_WEB.items() if self.acciones_web[k]) or 'Ninguna'}\n"
+            f"  Temporización : {self.temporizacion} segundos\n"
             f"  Tiempo        : {tiempo_str}"
         )
 
@@ -272,6 +276,7 @@ def _config_a_dict(config: Configuracion) -> dict:
         "modo": config.modo,
         "acciones_editor": dict(config.acciones_editor),
         "acciones_web": dict(config.acciones_web),
+        "temporizacion": temporizacion_config(config.temporizacion),
         "fecha": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
     }
 
@@ -294,6 +299,7 @@ def _dict_a_config(d: dict, comprobar_cancelacion=None) -> Configuracion:
 
     return Configuracion(
         editor=d.get("editor", "vsCode"),
+        temporizacion=temporizacion_config(d.get("temporizacion")),
         acciones_editor=acciones_config(d, "editor"),
         acciones_web=acciones_config(d, "web"),
         browser=d.get("browser"),
@@ -318,7 +324,8 @@ def _registro_valido(registro) -> bool:
     return (
         all(clave in {'editor', 'browser', 'paginas', 'nombres_web', 'fuente_tipo',
                       'fuente_descripcion', 'directorio', 'tiempo', 'fases', 'modo', 'fecha',
-                      'acciones_editor', 'acciones_web'} for clave in registro)
+                      'acciones_editor', 'acciones_web', 'temporizacion'} for clave in registro)
+        and temporizacion_valida(registro.get('temporizacion'))
         and all(clave not in registro or isinstance(registro[clave], dict)
                 and all(accion in opciones and type(valor) is bool for accion, valor in registro[clave].items())
                 for clave, opciones in (('acciones_editor', ACCIONES_EDITOR), ('acciones_web', ACCIONES_WEB)))
@@ -385,7 +392,7 @@ def guardar_configuracion(config: Configuracion) -> None:
     registros = cargar_historial()
     nuevo = _config_a_dict(config)
 
-    clave = {k: nuevo.get(k) for k in ("editor", "browser", "paginas", "fuente_tipo", "directorio", "tiempo", "fases", "modo", "nombres_web", "acciones_editor", "acciones_web")}
+    clave = {k: nuevo.get(k) for k in ("editor", "browser", "paginas", "fuente_tipo", "directorio", "tiempo", "fases", "modo", "nombres_web", "acciones_editor", "acciones_web", "temporizacion")}
     if registros:
         clave_ultimo = {k: registros[0].get(k) for k in clave}
         if clave_ultimo == clave:
@@ -432,6 +439,7 @@ def _cargar_config_previa(config: Configuracion) -> bool:
     config.fases = previa.fases
     config.acciones_editor = previa.acciones_editor
     config.acciones_web = previa.acciones_web
+    config.temporizacion = previa.temporizacion
     config.modo = previa.modo
     config.directorio = previa.directorio
     print("  Configuración previa cargada")

@@ -18,10 +18,21 @@ class MenuMacTest(unittest.TestCase):
             self.menu = MenuWorkBreak.alloc().init()
         self.menu.controlador.activo = False
         self.menu.controlador.permisos_pendientes = []
+        self.menu.controlador.avisos_pendientes = []
         self.menu.construir_menu = MagicMock()
         guardar = patch('mac_menu.guardar_preferencias')
         guardar.start()
         self.addCleanup(guardar.stop)
+
+    def test_detencion_usa_notificacion_o_aviso_interno(self):
+        with patch.object(self.menu, 'aviso') as aviso:
+            self.menu.notificar_detencion('Error', 'Motivo')
+            aviso.assert_called_once_with('Error', 'Motivo')
+            aviso.reset_mock()
+            self.menu.notificador = MagicMock()
+            self.menu.notificar_detencion('Error', 'Motivo')
+            self.menu.notificador.enviar.assert_called_once_with('Error', 'Motivo', aviso)
+            aviso.assert_not_called()
 
     def test_aviso_permisos_abre_panel_seleccionado(self):
         alerta = MagicMock()

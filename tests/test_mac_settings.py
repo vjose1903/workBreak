@@ -31,6 +31,17 @@ class ConfiguracionMacTest(unittest.TestCase):
         self.menu.ventana_configuracion = self.ventana
         self.addCleanup(self.ventana.ventana.close)
 
+    def test_tiempos_compartidos_y_bloqueados_durante_corrida(self):
+        tiempos = {'debounce': 3, 'editor': [1, 7], 'editor_alternado': [1, 7], 'navegador': [2, 4]}
+        with patch('mac_menu.DialogoSegundos') as dialogo:
+            dialogo.alloc.return_value.init.return_value.mostrar.return_value = tiempos
+            self.ventana.accion_(self.ventana.controles_tiempo['editor'])
+        self.assertEqual(cargar_preferencias()['temporizacion'], tiempos)
+        self.assertIn('1–7 s', self.ventana.controles_tiempo['editor'].title())
+        self.menu.controlador.activo = True
+        self.ventana.refrescar()
+        self.assertTrue(all(not c.isEnabled() for c in self.ventana.controles_tiempo.values()))
+
     def test_selector_editor_muestra_solo_instalados_y_guarda_eleccion(self):
         opciones = {'vsCode': 'Visual Studio Code', 'cursor': 'Cursor'}
         with patch('mac_settings.editores_instalados', return_value=opciones), \

@@ -141,6 +141,9 @@ class ControladorBot:
         self.registros = deque(maxlen=300)
         self.ultimo_error = ''
         self.permisos_pendientes = []
+        self.avisos_pendientes = []
+        self._finalizacion_notificada = False
+        self._fallo_permisos = False
         self.inicio = None
         self.deteniendo = False
         self._resultado_recibido = False
@@ -176,6 +179,9 @@ class ControladorBot:
         self.estadisticas = {}
         self.ultimo_error = ''
         self.permisos_pendientes = []
+        self.avisos_pendientes = []
+        self._finalizacion_notificada = False
+        self._fallo_permisos = False
         self.deteniendo = False
         self._resultado_recibido = False
         self._canal_fallido = False
@@ -216,20 +222,32 @@ class ControladorBot:
                     if evento.get('error'):
                         self.ultimo_error = evento['mensaje']
                 elif tipo == 'permisos':
+                    self._fallo_permisos = True
                     self.permisos_pendientes = evento['faltantes']
                 elif tipo == 'estado' and not self.deteniendo:
                     self.estado = evento
                 elif tipo == 'finalizado':
                     self._resultado_recibido = True
-                    self.estado = {'estado': 'finalizado' if evento['codigo'] == 0 else 'error'}
+                    self.estado = {'estado': 'finalizado' if evento['codigo'] == 0 else 'error', 'codigo': evento['codigo']}
                 if 'estadisticas' in evento:
                     self.estadisticas = evento['estadisticas']
         if self.proceso is not None and not self.proceso.is_alive():
             self.proceso.join(timeout=0)
-            if not self._resultado_recibido:
+            if not self._resultado_recibido and not self._finalizacion_notificada:
                 self.estado = {'estado': 'finalizado' if self.proceso.exitcode == 0 and not self._canal_fallido else 'error'}
                 if self.proceso.exitcode and not self.ultimo_error:
                     self.ultimo_error = f'El proceso terminó con código {self.proceso.exitcode}.'
+            if not self._finalizacion_notificada:
+                self._finalizacion_notificada = True
+                inesperada = not self._resultado_recibido and not self.deteniendo
+                if (self.estado.get('estado') == 'error' or inesperada or self._canal_fallido) and not self._fallo_permisos:
+                    self.estado['estado'] = 'error'
+                    emergencia = self.estado.get('codigo') == 2
+                    titulo = 'WorkBreak: parada de emergencia' if emergencia else 'WorkBreak se detuvo por un error'
+                    motivo = ('Se activó la parada de seguridad.' if emergencia else
+                              self.ultimo_error.splitlines()[0][:220] if self.ultimo_error else
+                              'El proceso terminó inesperadamente.' if inesperada else 'La corrida no pudo continuar.')
+                    self.avisos_pendientes.append((titulo, motivo + ' Revisa Estado y estadísticas o Ver registro.'))
             self.deteniendo = False
 
     def cerrar(self):

@@ -1,5 +1,6 @@
 """Ventana nativa que reúne las preferencias de WorkBreak."""
 import objc
+from timing_config import TITULOS, texto_tiempo
 from AppKit import (NSApplication, NSButton, NSColor, NSFont, NSPopUpButton,
                     NSSwitch, NSTabView, NSTabViewItem, NSTextField, NSView, NSWindow,
                     NSWindowStyleMaskTitled, NSWindowStyleMaskClosable,
@@ -19,14 +20,14 @@ class VentanaConfiguracion(NSObject):
         self.config = menu.config
         self.opciones = {}
         self.ventana = NSWindow.alloc().initWithContentRect_styleMask_backing_defer_(
-            ((0, 0), (740, 500)), NSWindowStyleMaskTitled | NSWindowStyleMaskClosable,
+            ((0, 0), (740, 600)), NSWindowStyleMaskTitled | NSWindowStyleMaskClosable,
             NSBackingStoreBuffered, False)
         self.ventana.setTitle_('Configuración de WorkBreak')
         self.ventana.setReleasedWhenClosed_(False)
         raiz = self.ventana.contentView()
-        self.etiqueta(raiz, 'Configuración', 28, 438, 500, 30, 23, True)
-        self.etiqueta(raiz, 'Las mismas opciones, compartidas con el menú de la barra.', 28, 410, 650, 22)
-        self.tabs = NSTabView.alloc().initWithFrame_(((24, 78), (692, 320)))
+        self.etiqueta(raiz, 'Configuración', 28, 538, 500, 30, 23, True)
+        self.etiqueta(raiz, 'Las mismas opciones, compartidas con el menú de la barra.', 28, 510, 650, 22)
+        self.tabs = NSTabView.alloc().initWithFrame_(((24, 78), (692, 420)))
         raiz.addSubview_(self.tabs)
         general = self.pestana('General')
         actividad = self.pestana('Actividad')
@@ -89,6 +90,16 @@ class VentanaConfiguracion(NSObject):
         self.etiqueta(editor, 'Sin «Escribir» no se carga ni reescribe código.', 430, 12, 210, 60)
         self.etiqueta(navegador, 'Sin «Mover mouse», el click y el scroll requieren el cursor dentro del área segura.',
                       430, 12, 210, 80)
+        # Reservar la zona inferior para los tiempos sin solapar los controles existentes.
+        for vista in (general, actividad, editor, navegador):
+            for control in vista.subviews():
+                posicion = control.frame().origin
+                control.setFrameOrigin_((posicion.x, posicion.y + 100))
+        self.controles_tiempo = {}
+        for clave, vista, y in (('debounce', actividad, 30), ('editor', editor, 60),
+                                ('editor_alternado', editor, 22), ('navegador', navegador, 30)):
+            control = self.boton(vista, '', 20, y, 620, 'temporizacion:' + clave)
+            self.controles_tiempo[clave] = control
         self.etiqueta(raiz, 'Cambios guardados automáticamente.', 28, 27, 490, 25)
         cerrar = self.boton(raiz, 'Cerrar', 595, 24, 125, 'cerrar')
         cerrar.setKeyEquivalent_('\r')
@@ -163,6 +174,10 @@ class VentanaConfiguracion(NSObject):
         for (entorno, clave), control in self.controles_acciones.items():
             control.setState_(int(acciones_config(self.config, entorno)[clave]))
             control.setEnabled_(not bloqueada and not (solo_web if entorno == 'editor' else solo_editor))
+        for clave, control in self.controles_tiempo.items():
+            control.setTitle_(TITULOS[clave] + ': ' + texto_tiempo(clave, self.config.get('temporizacion')) + '…')
+            control.setEnabled_(not bloqueada and not (
+                solo_web if clave.startswith('editor') else solo_editor if clave == 'navegador' else False))
         self.tiempo.setTitle_('Tiempo: ' + formatear_tiempo(self.config.get('tiempo')) + '…')
         self.ruta.setStringValue_('Configurado solo navegador.' if solo_web else
                                  self.config.get('directorio') or 'Se generará código React / TypeScript aleatorio.')

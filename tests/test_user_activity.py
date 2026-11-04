@@ -155,6 +155,15 @@ class MonitorActividadTest(unittest.TestCase):
         monitor.reconciliar_pulsadas()
         self.assertIn(('tecla', 1), monitor._pulsadas)
 
+    def test_debounce_cero_espera_a_soltar_la_tecla(self):
+        monitor = MonitorActividad(debounce=0)
+        monitor.registrar(('tecla', 1), True)
+        with patch.object(monitor._condicion, 'wait',
+                          side_effect=lambda _: monitor.registrar(('tecla', 1), False)) as esperar:
+            self.assertTrue(monitor.esperar_inactividad())
+        esperar.assert_called_once()
+        self.assertFalse(monitor._pulsadas)
+
     def test_no_reanuda_mientras_se_mantiene_una_tecla_pulsada(self):
         monitor = MonitorActividad()
         reloj = [0.0]

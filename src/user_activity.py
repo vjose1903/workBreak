@@ -146,7 +146,7 @@ class MonitorActividad:
                 if limite is not None and ahora >= limite:
                     return False
                 if self._pulsadas:
-                    restante = self.debounce
+                    restante = max(self.debounce, 0.1)
                 else:
                     restante = 0 if self._ultima is None else self._ultima + self.debounce - ahora
                 if restante <= 0:

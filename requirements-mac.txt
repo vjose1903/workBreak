@@ -2,3 +2,4 @@
 pyobjc-framework-Cocoa
 pyobjc-framework-ServiceManagement
 certifi
+pyobjc-framework-UserNotifications

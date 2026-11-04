@@ -411,8 +411,24 @@ class AutomationSafetyTest(unittest.TestCase):
         proceso.terminate.assert_called_once()
         proceso.kill.assert_not_called()
 
+    def test_turnos_respetan_rangos_configurados_en_segundos(self):
+        from timing_config import temporizacion_config
+        bot = AutomationBot.__new__(AutomationBot)
+        bot.temporizacion = temporizacion_config({'editor_alternado': [1, 7], 'navegador': [2, 4]})
+        bot._modo = 'ambos'
+        bot._turno_actual = 'editor'
+        bot.editor_interactor = MagicMock()
+        bot.web_interactor = MagicMock()
+        bot.ejecutar_tareas('vsCode', ['https://example.com'])
+        editor = bot.editor_interactor.interactuar_editor.call_args.kwargs['duracion_maxima']
+        navegador = bot.web_interactor.interactuar_web.call_args.kwargs['duracion_maxima']
+        self.assertTrue(1 <= editor <= 7)
+        self.assertTrue(2 <= navegador <= 4)
+
     def test_reanudacion_web_no_reinicia_el_editor(self):
         bot = AutomationBot.__new__(AutomationBot)
+        from timing_config import temporizacion_config
+        bot.temporizacion = temporizacion_config()
         bot._modo = 'ambos'
         bot._turno_actual = 'web'
         bot.editor_interactor = MagicMock()
@@ -425,6 +441,8 @@ class AutomationSafetyTest(unittest.TestCase):
 
     def test_solo_web_no_abre_editor_y_sigue_en_web(self):
         bot = AutomationBot.__new__(AutomationBot)
+        from timing_config import temporizacion_config
+        bot.temporizacion = temporizacion_config()
         bot._modo = 'web'
         bot._turno_actual = 'web'
         bot.editor_interactor = MagicMock()
