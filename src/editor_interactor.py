@@ -215,7 +215,7 @@ class EditorInteractor(BaseAutomation):
             if acciones['escribir']:
                 self._codigo_pendiente = self._obtener_codigo()
             self.ruta_archivo = self._crear_archivo_temporal(self._nombre_archivo_codigo())
-            self.reutilizar_ventana = not acciones['escribir'] and self._editor_tiene_ventana(editor)
+            self.reutilizar_ventana = self._editor_tiene_ventana(editor)
             if self.reutilizar_ventana:
                 logging.info("Hay una ventana del editor abierta; el archivo del bot se abre en ella")
 

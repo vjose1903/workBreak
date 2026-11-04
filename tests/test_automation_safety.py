@@ -1211,6 +1211,25 @@ class AutomationSafetyTest(unittest.TestCase):
         teclado.hotkey.assert_not_called()
         teclado.write.assert_called_once_with('(', interval=0)
 
+    def test_escritura_reutiliza_ventana_existente_y_solo_crea_otra_si_no_hay(self):
+        self.editor.acciones = {'escribir': True, 'click': True, 'scroll': True, 'mover_mouse': True}
+        for existente in (True, False):
+            with self.subTest(existente=existente), \
+                    patch.object(self.editor, '_obtener_codigo', return_value='const a = 1;'), \
+                    patch.object(self.editor, '_crear_archivo_temporal', return_value='/tmp/bot/archivo.tsx'), \
+                    patch.object(self.editor, '_editor_tiene_ventana', return_value=existente), \
+                    patch.object(self.editor, '_lanzar_editor', return_value='vsCode') as lanzar, \
+                    patch.object(self.editor, '_esperar_ventana_editor', return_value=True), \
+                    patch.object(self.editor, '_esperar'), \
+                    patch.object(self.editor, '_comprobar_atajo_corrida'), \
+                    patch.object(self.editor, '_asegurar_destino') as verificar, \
+                    patch.object(self.editor, '_llevar_mouse_al_editor'):
+                self.editor.EDITOR_ABIERTO = False
+                self.editor.abrir_editor('vsCode')
+                self.assertEqual(self.editor.reutilizar_ventana, existente)
+                lanzar.assert_called_once_with('vsCode', '/tmp/bot/archivo.tsx')
+                verificar.assert_called_once()
+
     @unittest.skipUnless(sys.platform == 'darwin', 'Lanzamiento nativo de VS Code en macOS')
     def test_abrir_espacio_nuevo_y_recuperar_solo_el_archivo(self):
         self.editor.is_mac = True
