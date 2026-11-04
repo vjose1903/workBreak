@@ -80,8 +80,41 @@ jobs:
           cache-dependency-path: requirements-build-mac.lock
       - name: Instalar dependencias de compilación
         run: python -m pip install -r requirements-build-mac.lock
+      - name: Importar certificados Developer ID
+        env:
+          CERTIFICATE_BASE64: ${{ secrets.WORKBREAK_CERTIFICATE_P12_BASE64 }}
+          CERTIFICATE_PASSWORD: ${{ secrets.WORKBREAK_CERTIFICATE_PASSWORD }}
+        run: |
+          set -euo pipefail
+          if [ -z "$CERTIFICATE_BASE64" ] || [ -z "$CERTIFICATE_PASSWORD" ]; then
+            echo "::error::Faltan los certificados Developer ID; no se publicará una firma provisional."
+            exit 1
+          fi
+          umask 077
+          certificate="$RUNNER_TEMP/workbreak-signing.p12"
+          keychain="$RUNNER_TEMP/workbreak-signing.keychain-db"
+          password=$(openssl rand -hex 32)
+          echo "::add-mask::$password"
+          printf '%s' "$CERTIFICATE_BASE64" | base64 --decode > "$certificate"
+          security create-keychain -p "$password" "$keychain"
+          security set-keychain-settings -lut 3600 "$keychain"
+          security unlock-keychain -p "$password" "$keychain"
+          security import "$certificate" -P "$CERTIFICATE_PASSWORD" -k "$keychain" -T /usr/bin/codesign -T /usr/bin/productsign
+          security set-key-partition-list -S apple-tool:,apple:,codesign: -k "$password" "$keychain"
+          security list-keychains -d user -s "$keychain" "$HOME/Library/Keychains/login.keychain-db"
+          rm -f "$certificate"
       - name: Crear instaladores
+        env:
+          WORKBREAK_CODESIGN_IDENTITY: ${{ vars.WORKBREAK_CODESIGN_IDENTITY }}
+          WORKBREAK_INSTALLER_IDENTITY: ${{ vars.WORKBREAK_INSTALLER_IDENTITY }}
+          WORKBREAK_TEAM_ID: ${{ vars.WORKBREAK_TEAM_ID }}
         run: python scripts/build_macos.py --no-migrate
+      - name: Eliminar certificados del runner
+        if: ${{ always() }}
+        run: |
+          keychain="$RUNNER_TEMP/workbreak-signing.keychain-db"
+          if [ -f "$keychain" ]; then security delete-keychain "$keychain"; fi
+          rm -f "$RUNNER_TEMP/workbreak-signing.p12"
       - uses: actions/upload-artifact@v7
         with:
           name: macos-${{ matrix.arch }}

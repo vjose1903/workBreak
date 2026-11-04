@@ -68,7 +68,7 @@ Concede los permisos que solicite macOS en **Ajustes del Sistema → Privacidad 
 | **Monitorización de entrada** | Detectar tu actividad y pausar la automatización. |
 | **Automatización** | Activar y consultar el editor y el navegador. |
 
-La distribución utiliza **firma local ad hoc, sin Developer ID ni notarización de Apple**. macOS puede bloquear la primera apertura de una descarga: revisa la autorización en **Privacidad y seguridad**. No es necesario desactivar Gatekeeper. Después de actualizar, macOS puede pedir renovar permisos.
+La distribución requiere **Developer ID Application y Developer ID Installer del mismo equipo Apple**, manteniendo el identificador de WorkBreak entre versiones. El CI bloquea la publicación si faltan las credenciales; nunca recurre a una firma ad hoc. La firma no implica notarización. La transición desde una versión ad hoc puede requerir renovar los permisos una vez.
 
 Los permisos pertenecen a la aplicación desde la que ejecutas el bot: los de Terminal o Python no sustituyen los de **WorkBreak.app**.
 
@@ -336,7 +336,14 @@ La ejecución compila el código del tag indicado y comprueba su `VERSION`; no m
 
 Los enlaces de descarga no requieren cambios con cada versión. La insignia de versión del código puede actualizarse al preparar una nueva versión.
 
-Si se incorporan certificados de Apple, el build admite `WORKBREAK_CODESIGN_IDENTITY`, `WORKBREAK_INSTALLER_IDENTITY` y `WORKBREAK_NOTARY_PROFILE`. El workflow actual utiliza firma local; no incluye credenciales de distribución ni realiza notarización.
+Configura en GitHub Actions antes de publicar:
+
+- Secrets: `WORKBREAK_CERTIFICATE_P12_BASE64` (exportación .p12 con ambos certificados Developer ID y sus claves privadas) y `WORKBREAK_CERTIFICATE_PASSWORD`.
+- Variables: `WORKBREAK_CODESIGN_IDENTITY` (`Developer ID Application: Nombre (TEAMID)`), `WORKBREAK_INSTALLER_IDENTITY` (`Developer ID Installer: Nombre (TEAMID)`) y `WORKBREAK_TEAM_ID` (el identificador de equipo Apple de 10 caracteres).
+
+Ambas arquitecturas importan los certificados en un llavero temporal que se elimina al finalizar. PyInstaller firma también los binarios internos con la identidad configurada. El build verifica la firma, el identificador de aplicación y el equipo antes de empaquetar. Mantén el mismo equipo y APP_ID en las actualizaciones; no uses certificados autofirmados como sustituto de Developer ID. La firma estable evita depender del hash de cada compilación, aunque macOS sigue controlando los permisos y puede requerir renovarlos.
+
+Para desarrollo local sin certificados se permite explícitamente `python scripts/build_macos.py --no-migrate --allow-adhoc`; esta opción se rechaza en CI. La notarización sigue siendo opcional mediante `WORKBREAK_NOTARY_PROFILE` en un entorno que tenga ese perfil configurado; el workflow no la realiza.
 
 ## 🩺 Solución de problemas
 

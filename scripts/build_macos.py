@@ -7,6 +7,7 @@ import os
 from pathlib import Path
 import platform
 import plistlib
+import re
 import shutil
 import subprocess
 import sys
@@ -56,9 +57,25 @@ def generar_icono(destino):
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument('--no-migrate', action='store_true', help='No copiar el historial local a Application Support')
+    parser.add_argument('--allow-adhoc', action='store_true', help='Firma provisional solo para desarrollo local')
     args = parser.parse_args()
     if sys.platform != 'darwin':
         parser.error('El DMG debe compilarse en macOS')
+    identidad = os.environ.get('WORKBREAK_CODESIGN_IDENTITY', '').strip()
+    instalador = os.environ.get('WORKBREAK_INSTALLER_IDENTITY', '').strip()
+    equipo = os.environ.get('WORKBREAK_TEAM_ID', '').strip()
+    if args.allow_adhoc and os.environ.get('CI'):
+        parser.error('--allow-adhoc solo se permite fuera de CI')
+    provisional = args.allow_adhoc
+    if provisional:
+        identidad = '-'
+    elif (not identidad.startswith('Developer ID Application:')
+          or not instalador.startswith('Developer ID Installer:')
+          or not re.fullmatch(r'[A-Z0-9]{10}', equipo)
+          or not identidad.endswith(f'({equipo})')
+          or not instalador.endswith(f'({equipo})')):
+        parser.error('La distribución requiere Developer ID Application, Developer ID Installer '
+                     'y WORKBREAK_TEAM_ID del mismo equipo. No se permite firma ad hoc en CI.')
     tag = os.environ.get('GITHUB_REF_NAME') if os.environ.get('GITHUB_REF_TYPE') == 'tag' else None
     if tag and tag != 'v' + VERSION:
         parser.error(f'El tag {tag} no coincide con VERSION ({VERSION})')
@@ -73,8 +90,11 @@ def main():
     trabajo.mkdir(parents=True)
     salida.mkdir(exist_ok=True)
     icono = generar_icono(trabajo)
+    permisos = trabajo / 'entitlements.plist'
+    permisos.write_bytes(plistlib.dumps({'com.apple.security.automation.apple-events': True}))
     ejecutar(sys.executable, '-m', 'PyInstaller', '--noconfirm', '--clean', '--windowed', '--onedir',
              '--name', 'WorkBreak', '--osx-bundle-identifier', APP_ID, '--icon', icono,
+             '--codesign-identity', identidad, '--osx-entitlements-file', permisos,
              '--add-data', f'{ROOT / "assets"}:assets', '--add-data', f'{ROOT / "VERSION"}:.',
              '--distpath', trabajo / 'app', '--workpath', trabajo / 'pyinstaller',
              '--specpath', trabajo, ROOT / 'src/main.py')
@@ -85,12 +105,18 @@ def main():
                 LSUIElement=True, LSMinimumSystemVersion='15.0', NSRequiresAquaSystemAppearance=False,
                 NSAppleEventsUsageDescription='WorkBreak necesita activar y verificar el editor y el navegador para realizar las interacciones configuradas.')
     plist.write_bytes(plistlib.dumps(info))
-    identidad = os.environ.get('WORKBREAK_CODESIGN_IDENTITY', '-')
     firma = ['codesign', '--force', '--deep', '--sign', identidad]
     if identidad != '-':
-        firma += ['--timestamp', '--options', 'runtime']
+        firma += ['--timestamp', '--options', 'runtime', '--entitlements', permisos]
     ejecutar(*firma, app)
     ejecutar('codesign', '--verify', '--deep', '--strict', app)
+    if identidad != '-':
+        firma_real = subprocess.run(['codesign', '-dv', '--verbose=4', str(app)],
+                                    capture_output=True, text=True, check=True).stderr
+        if (f'TeamIdentifier={equipo}' not in firma_real.splitlines()
+                or f'Identifier={APP_ID}' not in firma_real.splitlines()
+                or f'Authority={identidad}' not in firma_real.splitlines()):
+            raise RuntimeError('La identidad de la app firmada no coincide con el equipo configurado')
     comprobacion = trabajo / 'package-check.json'
     subprocess.run([str(app / 'Contents/MacOS/WorkBreak'), '--comprobar-paquete', str(comprobacion)],
                    check=True, timeout=60)
@@ -118,7 +144,6 @@ def main():
     paquete = salida / (nombre + '.pkg')
     ejecutar('pkgbuild', '--root', escenario, '--component-plist', componentes, '--scripts', scripts,
              '--identifier', APP_ID, '--version', VERSION, '--install-location', '/Applications', paquete)
-    instalador = os.environ.get('WORKBREAK_INSTALLER_IDENTITY')
     if instalador:
         firmado = trabajo / 'signed.pkg'
         ejecutar('productsign', '--sign', instalador, paquete, firmado)
