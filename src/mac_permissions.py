@@ -12,9 +12,26 @@ def permisos_faltantes():
     faltantes = []
     if not _api()['AXIsProcessTrusted']():
         faltantes.append('accesibilidad')
-    if not Quartz.CGPreflightListenEventAccess():
+    if not Quartz.CGPreflightListenEventAccess() and not _puede_observar_teclado(Quartz):
         faltantes.append('entrada')
     return faltantes
+
+
+def _puede_observar_teclado(quartz):
+    # El preflight puede denegar mientras Accesibilidad permite crear el observador.
+    # Probar la misma ubicación y modalidad del monitor, sin consumir ni guardar teclas.
+    tipos = (quartz.kCGEventKeyDown, quartz.kCGEventKeyUp, quartz.kCGEventFlagsChanged)
+    callback = lambda _proxy, _tipo, evento, _contexto: evento
+    tap = quartz.CGEventTapCreate(
+        quartz.kCGHIDEventTap, quartz.kCGHeadInsertEventTap,
+        quartz.kCGEventTapOptionListenOnly, sum(1 << tipo for tipo in tipos), callback, None)
+    if tap is None:
+        return False
+    try:
+        return bool(quartz.CGEventTapIsEnabled(tap))
+    finally:
+        quartz.CGEventTapEnable(tap, False)
+        quartz.CFMachPortInvalidate(tap)
 
 
 def abrir_configuracion(permiso):
