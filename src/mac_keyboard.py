@@ -2,6 +2,7 @@ import time
 
 import pyautogui
 import Quartz
+from user_activity import MARCA_TECLADO_BOT
 
 
 class MacKeyboard:
@@ -20,6 +21,9 @@ class MacKeyboard:
 
     def __init__(self, antes_evento=None):
         self.antes_evento = antes_evento
+        self.fuente = Quartz.CGEventSourceCreate(Quartz.kCGEventSourceStatePrivate)
+        if self.fuente is None:
+            raise RuntimeError('No se pudo crear la fuente privada de teclado')
 
     def _enviar(self, codigo, flags=0, texto=None):
         if self.antes_evento is not None:
@@ -27,14 +31,17 @@ class MacKeyboard:
         pyautogui.failSafeCheck()
         eventos = []
         for pulsada in (True, False):
-            evento = Quartz.CGEventCreateKeyboardEvent(None, codigo, pulsada)
+            evento = Quartz.CGEventCreateKeyboardEvent(self.fuente, codigo, pulsada)
             if evento is None:
                 raise RuntimeError('No se pudo crear el evento de teclado en macOS')
+            Quartz.CGEventSetIntegerValueField(evento, Quartz.kCGEventSourceUserData, MARCA_TECLADO_BOT)
             Quartz.CGEventSetFlags(evento, flags)
             if texto is not None:
                 longitud = len(texto.encode('utf-16-le')) // 2
                 Quartz.CGEventKeyboardSetUnicodeString(evento, longitud, texto)
             eventos.append(evento)
+        if self.antes_evento is not None:
+            self.antes_evento()
         # El par se prepara completo y siempre libera la tecla antes de propagar una pausa/error.
         try:
             Quartz.CGEventPost(Quartz.kCGHIDEventTap, eventos[0])

@@ -189,9 +189,11 @@ La detección nativa reconoció cuatro monitores en el entorno de desarrollo. El
 
 ## ⏸️ Pausas y detención
 
-**Al usar tu teclado o mouse, el bot cede el control.** Después del margen inicial, cualquier tecla, movimiento, clic o scroll reinicia una pausa de **10 segundos desde la última actividad**. Si sigues utilizando la PC, la cuenta vuelve a empezar; si mantienes una tecla o botón pulsado, la espera comienza cuando lo sueltas.
+Al pulsar **Iniciar bot**, la interfaz comprueba Accesibilidad y Monitorización de entrada. Si faltan, muestra un aviso con botones para abrir los paneles correspondientes y no inicia la sesión. El proceso del bot vuelve a comprobarlos antes de cargar fuentes o interactuar; si su autorización difiere, también lo comunica a la interfaz. Tras concederlos, vuelve a pulsar Iniciar bot; puede ser necesario reiniciar WorkBreak si macOS lo solicita.
 
-- **Primeros 5 segundos:** ignora la actividad para evitar que el Enter o clic de inicio provoque una pausa inmediata. El bot puede trabajar durante ese margen.
+**Al usar tu teclado o mouse, el bot cede el control.** Cualquier tecla, incluidos los modificadores, activa la pausa desde el inicio. Después del margen inicial del mouse, cualquier movimiento, clic o scroll reinicia una pausa de **10 segundos desde la última actividad**. Si sigues utilizando la PC, la cuenta vuelve a empezar; si mantienes una tecla o botón pulsado, la espera comienza cuando lo sueltas.
+
+- **Primeros 5 segundos:** solo el mouse tiene margen de gracia para evitar la pausa por el clic de inicio. El teclado pausa desde el primer momento, también al pulsar Command sin otra tecla.
 - **Durante la pausa:** el menú muestra el estado y la cuenta atrás; el registro informa los reinicios y la reanudación. Sus propios eventos no reinician la espera.
 - **Al reanudar:** recupera el trabajo pendiente. Si el archivo temporal cambió externamente, puede detener la edición para proteger esos cambios.
 - **Detener bot:** finaliza la sesión también durante una pausa. **Salir de WorkBreak** solicita la detención y espera la limpieza.

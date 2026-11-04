@@ -23,6 +23,22 @@ class MacKeyboardTest(unittest.TestCase):
             spec.loader.exec_module(modulo)
         self.teclado = modulo.MacKeyboard()
 
+    def test_actividad_durante_preparacion_impide_pulsar(self):
+        from user_activity import PausaPorActividad
+        self.teclado.antes_evento = MagicMock(side_effect=[None, PausaPorActividad()])
+        with self.assertRaises(PausaPorActividad):
+            self.teclado.write('a')
+        self.quartz.CGEventPost.assert_not_called()
+
+    def test_eventos_propios_tienen_marca_y_fuente_privada(self):
+        from user_activity import MARCA_TECLADO_BOT
+        self.teclado.hotkey('command', 'z')
+        for llamada in self.quartz.CGEventCreateKeyboardEvent.call_args_list:
+            self.assertIs(llamada.args[0], self.quartz.CGEventSourceCreate.return_value)
+        self.assertEqual(self.quartz.CGEventSetIntegerValueField.call_count, 2)
+        for llamada in self.quartz.CGEventSetIntegerValueField.call_args_list:
+            self.assertEqual(llamada.args[2], MARCA_TECLADO_BOT)
+
     def test_texto_no_hereda_modificadores_del_sistema(self):
         self.teclado.write('e :()')
         self.assertEqual(self.quartz.CGEventSetFlags.call_count, 10)
@@ -47,7 +63,7 @@ class MacKeyboardTest(unittest.TestCase):
 
     def test_pausa_se_consulta_antes_de_cada_caracter(self):
         from user_activity import PausaPorActividad
-        self.teclado.antes_evento = MagicMock(side_effect=[None, PausaPorActividad()])
+        self.teclado.antes_evento = MagicMock(side_effect=[None, None, PausaPorActividad()])
         with self.assertRaises(PausaPorActividad):
             self.teclado.write('ab')
         self.assertEqual(self.quartz.CGEventPost.call_count, 2)  # Solo down/up de la primera letra.

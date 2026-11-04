@@ -29,6 +29,7 @@ from app_updates import Actualizador
 from app_preferences import cargar_preferencias, guardar_preferencias
 from mac_settings import VentanaConfiguracion
 from app_controller import ControladorBot
+from mac_permissions import permisos_faltantes, abrir_configuracion, PERMISOS
 from menu import Configuracion, MODOS_INTERACCION, NAVEGADORES_VALIDOS, formatear_tiempo, _config_a_dict, cargar_historial, normalizar_web, ACCIONES_EDITOR, ACCIONES_WEB, acciones_config
 
 
@@ -506,6 +507,10 @@ class MenuWorkBreak(NSObject):
     @objc.python_method
     def actualizar(self, _timer):
         self.controlador.actualizar()
+        pendientes = self.controlador.permisos_pendientes
+        if pendientes:
+            self.controlador.permisos_pendientes = []
+            self.mostrar_permisos(pendientes)
         activo = self.controlador.activo
         finalizo = self._estaba_activo and not activo
         self._estaba_activo = activo
@@ -575,6 +580,26 @@ class MenuWorkBreak(NSObject):
         alerta.setInformativeText_(mensaje)
         alerta.addButtonWithTitle_('Aceptar')
         alerta.runModal()
+
+    @objc.python_method
+    def mostrar_permisos(self, faltantes):
+        NSApplication.sharedApplication().activateIgnoringOtherApps_(True)
+        alerta = NSAlert.alloc().init()
+        alerta.setMessageText_('WorkBreak necesita permisos para iniciar')
+        nombres = ', '.join(PERMISOS[permiso][0] for permiso in faltantes)
+        alerta.setInformativeText_(
+            'Falta autorizar: ' + nombres + '.\n\n'
+            'Activa WorkBreak en Privacidad y seguridad. Si no aparece, agrégalo con + '
+            'desde Aplicaciones. Después vuelve a pulsar Iniciar bot. '
+            'Si macOS pide cerrar y volver a abrir WorkBreak, acepta.\n\n'
+            'Si ya figura autorizado y sigue fallando, elimina su entrada y agrega la app instalada nuevamente.')
+        for permiso in faltantes:
+            alerta.addButtonWithTitle_('Abrir ' + PERMISOS[permiso][0])
+        alerta.addButtonWithTitle_('Cancelar')
+        indice = alerta.runModal() - 1000
+        if 0 <= indice < len(faltantes) and not abrir_configuracion(faltantes[indice]):
+            self.aviso('No se pudo abrir Configuración',
+                       'Abre Ajustes del Sistema → Privacidad y seguridad → ' + PERMISOS[faltantes[indice]][0])
 
     @objc.python_method
     def mostrar_actualizacion(self, resultado):
@@ -661,6 +686,10 @@ class MenuWorkBreak(NSObject):
                 self.ventana_configuracion.mostrar()
             elif comando == 'iniciar':
                 if self.ventana_configuracion is not None and self.ventana_configuracion.ventana.isVisible():
+                    return
+                faltantes = permisos_faltantes()
+                if faltantes:
+                    self.mostrar_permisos(faltantes)
                     return
                 self.controlador.iniciar(self.config)
             else:

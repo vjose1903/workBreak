@@ -16,6 +16,8 @@ class DetencionSolicitada(BaseException):
 
 
 # Bloqueo de mayúsculas (0x39) y modificadores: ⌘ 0x36/0x37, ⇧ 0x38/0x3C, ⌥ 0x3A/0x3D, ⌃ 0x3B/0x3E, Fn 0x3F.
+MARCA_TECLADO_BOT = 0x57424B455953
+
 TECLAS_IGNORADAS_MAC = frozenset(range(0x36, 0x40))
 
 
@@ -78,7 +80,7 @@ class MonitorActividad:
             destino_x, destino_y, hasta = self._movimiento_bot
         return time.monotonic() <= hasta and math.dist((x, y), (destino_x, destino_y)) <= 3
 
-    def registrar(self, identificador=None, pulsada=None, causa=None):
+    def registrar(self, identificador=None, pulsada=None, causa=None, inmediata=False):
         with self._condicion:
             ahora = time.monotonic()
             if identificador is not None:
@@ -86,7 +88,7 @@ class MonitorActividad:
                     self._pulsadas.add(identificador)
                 else:
                     self._pulsadas.discard(identificador)
-            if self._detectar_desde is not None and ahora < self._detectar_desde:
+            if not inmediata and self._detectar_desde is not None and ahora < self._detectar_desde:
                 return
             self._ultima = ahora
             self._version += 1
@@ -198,7 +200,7 @@ class MonitorActividad:
             raise RuntimeError(f"No se pudo iniciar el monitor de actividad: {self._error}")
         with self._condicion:
             self._detectar_desde = time.monotonic() + self.margen_inicial
-        logging.info("Inicio del bot: las pausas por actividad se activarán en %g segundos", self.margen_inicial)
+        logging.info("Inicio del bot: pausa inmediata por teclado; margen inicial del mouse: %g segundos", self.margen_inicial)
 
     def _escuchar(self):
         try:
@@ -251,7 +253,15 @@ class MonitorActividad:
                     with self._condicion:
                         self._error = "macOS desactivó la observación de teclado/mouse"
                         self._condicion.notify_all()
-            elif (pid := q.CGEventGetIntegerValueField(evento, q.kCGEventSourceUnixProcessID)) != os.getpid():
+            else:
+                pid = q.CGEventGetIntegerValueField(evento, q.kCGEventSourceUnixProcessID)
+                teclado = tipo in (q.kCGEventKeyDown, q.kCGEventKeyUp, q.kCGEventFlagsChanged)
+                # El PID no identifica con suficiente precisión un evento de teclado propio.
+                if teclado:
+                    if q.CGEventGetIntegerValueField(evento, q.kCGEventSourceUserData) == MARCA_TECLADO_BOT:
+                        return evento
+                elif pid == os.getpid():
+                    return evento
                 causa = f"evento {tipo} del proceso {pid}"
                 if tipo == q.kCGEventMouseMoved:
                     punto = q.CGEventGetLocation(evento)
@@ -259,7 +269,7 @@ class MonitorActividad:
                         return evento
                 if tipo in (q.kCGEventKeyDown, q.kCGEventKeyUp):
                     codigo = q.CGEventGetIntegerValueField(evento, q.kCGKeyboardEventKeycode)
-                    self.registrar(('tecla', codigo), tipo == q.kCGEventKeyDown, causa)
+                    self.registrar(('tecla', codigo), tipo == q.kCGEventKeyDown, causa, inmediata=True)
                 elif tipo == q.kCGEventFlagsChanged:
                     codigo = q.CGEventGetIntegerValueField(evento, q.kCGKeyboardEventKeycode)
                     mascaras = {0x36: q.kCGEventFlagMaskCommand, 0x37: q.kCGEventFlagMaskCommand,
@@ -274,7 +284,7 @@ class MonitorActividad:
                             modificadores_usuario.add(mascara)
                         else:
                             modificadores_usuario.discard(mascara)
-                    self.registrar(('modificador', mascara) if mascara is not None else None, pulsada, causa)
+                    self.registrar(('modificador', mascara) if mascara is not None else None, pulsada, causa, inmediata=True)
                 elif tipo in (q.kCGEventLeftMouseDown, q.kCGEventLeftMouseUp,
                                q.kCGEventRightMouseDown, q.kCGEventRightMouseUp,
                                q.kCGEventOtherMouseDown, q.kCGEventOtherMouseUp):
@@ -285,7 +295,7 @@ class MonitorActividad:
                     self.registrar(causa=causa)
             return evento
 
-        tap = q.CGEventTapCreate(q.kCGSessionEventTap, q.kCGHeadInsertEventTap,
+        tap = q.CGEventTapCreate(q.kCGHIDEventTap, q.kCGHeadInsertEventTap,
                                  q.kCGEventTapOptionListenOnly,
                                  sum(1 << tipo for tipo in tipos), evento, None)
         if tap is None:
@@ -350,7 +360,7 @@ class MonitorActividad:
         def teclado(codigo, mensaje, datos):
             if codigo >= 0 and not c.cast(datos, c.POINTER(Teclado)).contents.flags & 0x10:
                 tecla = c.cast(datos, c.POINTER(Teclado)).contents.vk
-                self.registrar(('tecla', tecla), mensaje in (0x0100, 0x0104))
+                self.registrar(('tecla', tecla), mensaje in (0x0100, 0x0104), inmediata=True)
             return usuario.CallNextHookEx(None, codigo, mensaje, datos)
 
         @callback_type

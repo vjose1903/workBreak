@@ -187,6 +187,48 @@ class MonitorActividadTest(unittest.TestCase):
             with self.assertRaises(PausaPorActividad):
                 monitor.comprobar()
 
+    def test_teclas_y_modificadores_mac_pausan_incluso_en_margen_inicial(self):
+        from user_activity import MARCA_TECLADO_BOT
+        tipos = ['KeyDown', 'KeyUp', 'FlagsChanged', 'MouseMoved', 'LeftMouseDown',
+                 'LeftMouseUp', 'RightMouseDown', 'RightMouseUp', 'OtherMouseDown',
+                 'OtherMouseUp', 'LeftMouseDragged', 'RightMouseDragged',
+                 'OtherMouseDragged', 'ScrollWheel']
+        for codigo in (0x37, 0x36, 0x38, 0x3A, 0x3B, 0x3F, 0x39, 0x06):
+            with self.subTest(codigo=codigo):
+                monitor = MonitorActividad()
+                monitor._detectar_desde = float('inf')
+                quartz = MagicMock()
+                quartz.CGEventSourceFlagsState.return_value = 0
+                for numero, tipo in enumerate(tipos):
+                    setattr(quartz, 'kCGEvent' + tipo, numero)
+                quartz.kCGEventTapDisabledByTimeout = -1
+                quartz.kCGEventTapDisabledByUserInput = -2
+                quartz.kCGEventSourceUnixProcessID = 'pid'
+                quartz.kCGEventSourceUserData = 'marca'
+                quartz.kCGKeyboardEventKeycode = 'codigo'
+                for indice, nombre in enumerate(('Command', 'Control', 'Shift', 'Alternate', 'SecondaryFn')):
+                    setattr(quartz, 'kCGEventFlagMask' + nombre, 1 << (indice + 16))
+                quartz.CGEventGetFlags.return_value = (1 << 21) - 1
+                quartz.CGEventGetIntegerValueField.side_effect = lambda evento, campo: evento[campo]
+
+                def procesar(*_):
+                    callback = quartz.CGEventTapCreate.call_args.args[4]
+                    tipo = quartz.kCGEventFlagsChanged if codigo != 0x06 else quartz.kCGEventKeyDown
+                    evento = {'pid': os.getpid(), 'marca': MARCA_TECLADO_BOT, 'codigo': codigo}
+                    callback(None, tipo, evento, None)
+                    monitor.comprobar()  # Los atajos marcados del bot no pausan.
+                    evento['marca'] = 0
+                    callback(None, tipo, evento, None)
+                    with self.assertRaises(PausaPorActividad):
+                        monitor.comprobar()
+                    monitor._detener.set()
+
+                quartz.CFRunLoopRunInMode.side_effect = procesar
+                with patch.dict(sys.modules, {'Quartz': quartz}):
+                    monitor._escuchar_mac()
+                self.assertEqual(quartz.CGEventTapCreate.call_args.args[0], quartz.kCGHIDEventTap)
+                self.assertEqual(monitor._version, 1)
+
     def test_eventos_mac_del_bot_no_reinician_debounce(self):
         monitor = MonitorActividad()
         quartz = MagicMock()

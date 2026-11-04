@@ -91,6 +91,13 @@ def ejecutar_proceso_bot(registro, detener, eventos, ruta_log, pid_interfaz):
             codigo = 0
             return
         informar('iniciando')
+        if sys.platform == 'darwin':
+            from mac_permissions import permisos_faltantes
+            faltantes = permisos_faltantes()
+            if faltantes:
+                _publicar(eventos, {'tipo': 'permisos', 'faltantes': faltantes})
+                logging.error('Faltan permisos para iniciar: %s', json.dumps({'permisos': faltantes}))
+                return
         config = _dict_a_config(registro, comprobar_cancelacion=comprobar_cancelacion)
         if config.modo != 'web' and config.acciones_editor['escribir'] and registro.get('fuente_tipo') == 'directorio' and not hasattr(config.fuente, 'directorio'):
             raise ValueError('No se pudo cargar el directorio elegido. Selecciona otro directorio.')
@@ -133,6 +140,7 @@ class ControladorBot:
         self.estadisticas = {}
         self.registros = deque(maxlen=300)
         self.ultimo_error = ''
+        self.permisos_pendientes = []
         self.inicio = None
         self.deteniendo = False
         self._resultado_recibido = False
@@ -167,6 +175,7 @@ class ControladorBot:
         self.estado = {'estado': 'iniciando'}
         self.estadisticas = {}
         self.ultimo_error = ''
+        self.permisos_pendientes = []
         self.deteniendo = False
         self._resultado_recibido = False
         self._canal_fallido = False
@@ -206,6 +215,8 @@ class ControladorBot:
                     self.registros.append(evento['mensaje'])
                     if evento.get('error'):
                         self.ultimo_error = evento['mensaje']
+                elif tipo == 'permisos':
+                    self.permisos_pendientes = evento['faltantes']
                 elif tipo == 'estado' and not self.deteniendo:
                     self.estado = evento
                 elif tipo == 'finalizado':

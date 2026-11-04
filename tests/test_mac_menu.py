@@ -17,10 +17,28 @@ class MenuMacTest(unittest.TestCase):
                 patch('mac_menu.cargar_preferencias', return_value=None):
             self.menu = MenuWorkBreak.alloc().init()
         self.menu.controlador.activo = False
+        self.menu.controlador.permisos_pendientes = []
         self.menu.construir_menu = MagicMock()
         guardar = patch('mac_menu.guardar_preferencias')
         guardar.start()
         self.addCleanup(guardar.stop)
+
+    def test_aviso_permisos_abre_panel_seleccionado(self):
+        alerta = MagicMock()
+        alerta.runModal.return_value = 1001
+        with patch('mac_menu.NSAlert') as fabrica, \
+                patch('mac_menu.abrir_configuracion', return_value=True) as abrir:
+            fabrica.alloc.return_value.init.return_value = alerta
+            self.menu.mostrar_permisos(['accesibilidad', 'entrada'])
+        abrir.assert_called_once_with('entrada')
+
+    def test_cancelar_aviso_no_abre_configuracion(self):
+        alerta = MagicMock()
+        alerta.runModal.return_value = 1001
+        with patch('mac_menu.NSAlert') as fabrica, patch('mac_menu.abrir_configuracion') as abrir:
+            fabrica.alloc.return_value.init.return_value = alerta
+            self.menu.mostrar_permisos(['accesibilidad'])
+        abrir.assert_not_called()
 
     def test_cierre_nativo_espera_limpieza_sin_bloquear_el_hilo_principal(self):
         self.menu.actualizador.preparada = {'carpeta': '/tmp/prueba'}

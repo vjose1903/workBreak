@@ -127,6 +127,7 @@ class ControladorBotTest(unittest.TestCase):
         bot.gestionar_ejecucion.return_value = 0
         with tempfile.TemporaryDirectory() as carpeta, \
                 patch('app_controller.signal.signal'), \
+                patch('mac_permissions.permisos_faltantes', return_value=[]), \
                 patch.dict(sys.modules, {'automation_bot': modulo}):
             ejecutar_proceso_bot(registro, detener, eventos, str(Path(carpeta) / 'bot.log'), os.getppid())
         bot.gestionar_ejecucion.assert_called_once()
