@@ -1,6 +1,7 @@
 import multiprocessing
 import os
 import queue
+import threading
 from pathlib import Path
 import sys
 import tempfile
@@ -10,7 +11,7 @@ from unittest.mock import MagicMock, patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / 'src'))
 
-from app_controller import ControladorBot, ejecutar_proceso_bot
+from app_controller import ControladorBot, ejecutar_proceso_bot, _publicar
 from menu import Configuracion, _config_a_dict, _dict_a_config
 from main import main
 
@@ -48,6 +49,26 @@ class ContextoCancelado(ContextoSimulado):
 
 
 class ControladorBotTest(unittest.TestCase):
+    def test_cola_llena_no_descarta_resultado_final_ni_permisos(self):
+        for tipo in ('finalizado', 'permisos'):
+            with self.subTest(tipo=tipo):
+                eventos = queue.Queue(maxsize=1)
+                eventos.put({'tipo': 'registro'})
+                mensaje = {'tipo': tipo, 'codigo': 0}
+                hilo = threading.Thread(target=_publicar, args=(eventos, mensaje), daemon=True)
+                hilo.start()
+                self.assertEqual(eventos.get(timeout=1), {'tipo': 'registro'})
+                self.assertEqual(eventos.get(timeout=1), mensaje)
+                hilo.join(timeout=1)
+                self.assertFalse(hilo.is_alive())
+
+    def test_publicacion_no_espera_si_la_interfaz_desaparecio(self):
+        eventos = queue.Queue(maxsize=1)
+        eventos.put({'tipo': 'registro'})
+        with patch('app_controller.os.getppid', return_value=2):
+            _publicar(eventos, {'tipo': 'finalizado'}, pid_interfaz=1)
+        self.assertEqual(eventos.qsize(), 1)
+
     def setUp(self):
         # Las pruebas no dependen de los editores instalados en la máquina (los runners de CI no tienen ninguno).
         editores = patch('app_controller.editores_instalados', return_value={'vsCode': 'Visual Studio Code'})

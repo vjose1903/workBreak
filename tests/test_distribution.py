@@ -2,23 +2,68 @@ import json
 from pathlib import Path
 import sys
 import tempfile
+import threading
+import time
 import unittest
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / 'src'))
 from app_paths import migrar_historial, recurso, ruta_historial
-from app_updates import interpretar_release, Actualizador, consultar_github
+from app_updates import interpretar_release, Actualizador, _consultar_github_http, consultar_github
+from app_update_install import ActualizacionCancelada
 from app_version import GITHUB_REPO, version_numerica
 
 
+def _consulta_bloqueada_para_test(_resultados):
+    threading.Event().wait(30)
+
+
 class DistribucionTest(unittest.TestCase):
+    def test_cancelacion_recoge_proceso_real_sin_red(self):
+        cancelar = threading.Event()
+        temporizador = threading.Timer(0.4, cancelar.set)
+        inicio = time.monotonic()
+        temporizador.start()
+        try:
+            with patch('app_updates._consulta_separada', _consulta_bloqueada_para_test):
+                with self.assertRaises(ActualizacionCancelada):
+                    consultar_github(cancelar)
+        finally:
+            temporizador.cancel()
+            temporizador.join(timeout=1)
+        self.assertLess(time.monotonic() - inicio, 5)
+    def test_consulta_se_cancela_aunque_el_http_este_bloqueado(self):
+        contexto = MagicMock()
+        cancelar = MagicMock()
+        cancelar.is_set.side_effect = [False, True]
+        with patch('app_updates.multiprocessing.get_context', return_value=contexto):
+            with self.assertRaises(ActualizacionCancelada):
+                consultar_github(cancelar)
+        contexto.Process.return_value.terminate.assert_called_once()
+        contexto.Queue.return_value.close.assert_called_once()
+
+    def test_consulta_tiene_limite_total_incluido_dns(self):
+        contexto = MagicMock()
+        with patch('app_updates.multiprocessing.get_context', return_value=contexto), \
+                patch('app_updates.time.monotonic', side_effect=[0, 31]):
+            with self.assertRaisesRegex(TimeoutError, '30 segundos'):
+                consultar_github(threading.Event())
+        contexto.Process.return_value.terminate.assert_called_once()
+
+    def test_consulta_cancelada_no_muestra_error_de_red(self):
+        actualizador = Actualizador()
+        with patch('app_updates.consultar_github', side_effect=ActualizacionCancelada()):
+            actualizador._consultar()
+        self.assertEqual(actualizador.obtener_resultado(), {'cancelada': True})
+        self.assertFalse(actualizador.consultando)
+
     def test_consulta_github_verifica_https_con_certificados_incluidos(self):
         from types import SimpleNamespace
         with patch.dict(sys.modules, {'certifi': SimpleNamespace(where=lambda: '/CA/bundle.pem')}), \
                 patch('app_updates.ssl.create_default_context') as contexto, \
                 patch('app_updates.urlopen') as abrir:
             abrir.return_value.__enter__.return_value.read.return_value = b'{"tag_name": "v1.0.0"}'
-            self.assertIsNone(consultar_github())
+            self.assertIsNone(_consultar_github_http())
         contexto.assert_called_once_with(cafile='/CA/bundle.pem')
         self.assertIs(abrir.call_args.kwargs['context'], contexto.return_value)
 

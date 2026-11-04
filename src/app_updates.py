@@ -1,10 +1,12 @@
 """Consulta Releases generadas desde los tags de GitHub, sin bloquear AppKit."""
 import json
 import logging
+import multiprocessing
 import platform
 import queue
 import threading
 import ssl
+import time
 from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
 
@@ -38,7 +40,7 @@ def interpretar_release(release, version_actual=VERSION, arquitectura=None):
     raise ValueError('La nueva versión todavía no tiene un instalador para este Mac. Inténtalo más tarde.')
 
 
-def consultar_github():
+def _consultar_github_http():
     import certifi
     peticion = Request(f'https://api.github.com/repos/{GITHUB_REPO}/releases/latest', headers={
         'Accept': 'application/vnd.github+json', 'User-Agent': f'WorkBreak/{VERSION}',
@@ -59,6 +61,59 @@ def consultar_github():
         raise ValueError('No se pudo conectar con GitHub. Comprueba tu conexión.') from error
 
 
+def _consulta_separada(resultados):
+    try:
+        resultados.put({'actualizacion': _consultar_github_http()})
+    except Exception as error:
+        resultados.put({'error': str(error)})
+
+
+def consultar_github(cancelar=None):
+    # Aislar también DNS y lecturas bloqueadas: un timeout de socket no limita el total.
+    contexto = multiprocessing.get_context('spawn')
+    resultados = contexto.Queue(maxsize=1)
+    proceso = contexto.Process(target=_consulta_separada, args=(resultados,), daemon=True)
+    iniciado = False
+    limite = time.monotonic() + 30
+    try:
+        if cancelar is not None and cancelar.is_set():
+            raise ActualizacionCancelada()
+        proceso.start()
+        iniciado = True
+        while True:
+            if cancelar is not None and cancelar.is_set():
+                raise ActualizacionCancelada()
+            restante = limite - time.monotonic()
+            if restante <= 0:
+                raise TimeoutError('La consulta de actualizaciones superó el límite de 30 segundos')
+            try:
+                resultado = resultados.get(timeout=min(0.1, restante))
+            except queue.Empty:
+                if not proceso.is_alive():
+                    # El hijo espera a vaciar su cola antes de finalizar.
+                    try:
+                        resultado = resultados.get(timeout=0.1)
+                    except queue.Empty as error:
+                        raise RuntimeError('La consulta de actualizaciones terminó sin resultado') from error
+                else:
+                    continue
+            if 'error' in resultado:
+                raise ValueError(resultado['error'])
+            return resultado['actualizacion']
+    finally:
+        if iniciado:
+            proceso.join(timeout=0.2)
+            if proceso.is_alive():
+                proceso.terminate()
+                proceso.join(timeout=1)
+            if proceso.is_alive():
+                proceso.kill()
+                proceso.join(timeout=1)
+        proceso.close()
+        resultados.close()
+        resultados.join_thread()
+
+
 class Actualizador:
     def __init__(self):
         self.consultando = False
@@ -74,12 +129,15 @@ class Actualizador:
         if self.consultando:
             return
         self.consultando = True
+        self.cancelacion.clear()
         self.texto_menu = 'Buscando actualizaciones…'
         threading.Thread(target=self._consultar, daemon=True, name='actualizaciones').start()
 
     def _consultar(self):
         try:
-            self.resultados.put({'actualizacion': consultar_github()})
+            self.resultados.put({'actualizacion': consultar_github(self.cancelacion)})
+        except ActualizacionCancelada:
+            self.resultados.put({'cancelada': True})
         except Exception as error:
             self.resultados.put({'error': str(error)})
         finally:

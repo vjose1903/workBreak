@@ -17,7 +17,18 @@ from menu import _dict_a_config, _registro_valido, validar_acciones_ejecucion
 from user_activity import DetencionSolicitada
 
 
-def _publicar(eventos, evento):
+def _publicar(eventos, evento, pid_interfaz=None):
+    if evento.get('tipo') in ('finalizado', 'permisos'):
+        # Los mensajes de control no compiten con los registros descartables.
+        while pid_interfaz is None or os.getppid() == pid_interfaz:
+            try:
+                eventos.put(evento, timeout=0.1)
+                return
+            except queue.Full:
+                continue
+            except (ValueError, OSError):
+                return
+        return
     try:
         eventos.put_nowait(evento)
     except (queue.Full, ValueError, OSError):
@@ -60,7 +71,7 @@ def ejecutar_proceso_bot(registro, detener, eventos, ruta_log, pid_interfaz):
     except OSError as error:
         _publicar(eventos, {'tipo': 'registro', 'error': True,
                            'mensaje': 'No se pudo abrir el registro: ' + json.dumps({'error': str(error)})})
-        _publicar(eventos, {'tipo': 'finalizado', 'codigo': 1, 'estadisticas': {}})
+        _publicar(eventos, {'tipo': 'finalizado', 'codigo': 1, 'estadisticas': {}}, pid_interfaz)
         raise SystemExit(1) from error
     archivo.setFormatter(logging.Formatter('%(asctime)s — %(levelname)s — %(message)s'))
     consola = logging.StreamHandler()
@@ -95,7 +106,7 @@ def ejecutar_proceso_bot(registro, detener, eventos, ruta_log, pid_interfaz):
             from mac_permissions import permisos_faltantes
             faltantes = permisos_faltantes()
             if faltantes:
-                _publicar(eventos, {'tipo': 'permisos', 'faltantes': faltantes})
+                _publicar(eventos, {'tipo': 'permisos', 'faltantes': faltantes}, pid_interfaz)
                 logging.error('Faltan permisos para iniciar: %s', json.dumps({'permisos': faltantes}))
                 return
         config = _dict_a_config(registro, comprobar_cancelacion=comprobar_cancelacion)
@@ -116,7 +127,7 @@ def ejecutar_proceso_bot(registro, detener, eventos, ruta_log, pid_interfaz):
         _publicar(eventos, {
             'tipo': 'finalizado', 'codigo': codigo,
             'estadisticas': _estadisticas(bot) if bot is not None else {},
-        })
+        }, pid_interfaz)
         raiz.removeHandler(puente)
         raiz.removeHandler(archivo)
         raiz.removeHandler(consola)
@@ -205,6 +216,9 @@ class ControladorBot:
             self.detencion.set()
 
     def actualizar(self):
+        terminado = self.proceso is not None and not self.proceso.is_alive()
+        if terminado:
+            self.proceso.join(timeout=0)
         if self.eventos is not None:
             for _ in range(256):
                 try:
@@ -231,8 +245,7 @@ class ControladorBot:
                     self.estado = {'estado': 'finalizado' if evento['codigo'] == 0 else 'error', 'codigo': evento['codigo']}
                 if 'estadisticas' in evento:
                     self.estadisticas = evento['estadisticas']
-        if self.proceso is not None and not self.proceso.is_alive():
-            self.proceso.join(timeout=0)
+        if terminado:
             if not self._resultado_recibido and not self._finalizacion_notificada:
                 self.estado = {'estado': 'finalizado' if self.proceso.exitcode == 0 and not self._canal_fallido else 'error'}
                 if self.proceso.exitcode and not self.ultimo_error:

@@ -1,4 +1,5 @@
 import json
+import clipboard_state
 import logging
 import os
 from pathlib import Path
@@ -44,11 +45,12 @@ class EditorInteractor(BaseAutomation):
         self.stats_tracker = stats_tracker
         self.fuente_codigo = fuente_codigo or CodeGenerator()
         self.VALID_EDITORS = list(EDITORES)
-        self.EDITOR_STARTUP_TIME = 2
+        self.EDITOR_STARTUP_TIME = 30
         self.EDITOR_WINDOW_OFFSET = 20
         self.EDITOR_ABIERTO = False
         self.editor_actual = None
         self._portapapeles_original = None
+        self._formatos_portapapeles = None
         self.lineas_actuales = None
         self._lineas_observadas = {}
         self.fases = "ambas"
@@ -329,10 +331,11 @@ class EditorInteractor(BaseAutomation):
             raise EditorNoDisponible("No se pudo enfocar el editor; se cancela la entrada")
         if not self._esperar_editor_al_frente(info):
             raise EditorNoDisponible("El editor no pasó a primer plano; se cancela la entrada")
-        # La comprobación del título se hace después de enfocar el grupo de código.
-        self._hotkey(self.cmd_key, "1")
-        self._esperar(0.15)
         try:
+            documento_previo = documento_editor(EDITORES[self.editor_actual]['bundle']) if self.is_mac else ''
+            # Enfocar código también cuando el terminal integrado tenía el foco.
+            self._hotkey(self.cmd_key, "1")
+            self._esperar(0.15)
             if self.is_windows:
                 import win32gui
                 titulo = win32gui.GetWindowText(win32gui.GetForegroundWindow())
@@ -342,6 +345,17 @@ class EditorInteractor(BaseAutomation):
                 self._antes_accion()
                 documento = documento_editor(EDITORES[self.editor_actual]['bundle'])
                 self._antes_accion()
+                if (self.reutilizar_ventana and _misma_ruta(documento_previo, self.ruta_archivo)
+                        and not _misma_ruta(documento, self.ruta_archivo)):
+                    # El archivo estaba en otro grupo: abrirlo en el grupo que acabamos de enfocar.
+                    cmd = self._comando_abrir_editor(self.editor_actual, self.ruta_archivo)
+                    if not cmd or not self.ejecutar_comando(cmd):
+                        raise EditorNoDisponible('No se pudo enfocar el archivo temporal en el grupo de código')
+                    limite = time.monotonic() + 5
+                    while not _misma_ruta(documento, self.ruta_archivo) and time.monotonic() < limite:
+                        self._esperar(0.1)
+                        documento = documento_editor(EDITORES[self.editor_actual]['bundle'])
+                        self._antes_accion()
                 if not _misma_ruta(documento, self.ruta_archivo):
                     raise EditorNoDisponible("El archivo del bot no está activo; se cancela la entrada")
                 return
@@ -799,6 +813,7 @@ class EditorInteractor(BaseAutomation):
         if contenido == marcador:
             return None
         self.portapapeles_bot['ultimo'] = contenido
+        self.portapapeles_bot['version'] = clipboard_state.version()
         return contenido
 
     def _confirmar_linea_mac(self, numero: int) -> None:
@@ -862,10 +877,23 @@ class EditorInteractor(BaseAutomation):
     def guardar_portapapeles_original(self):
         if self._portapapeles_original is None:
             try:
-                self._portapapeles_original = self.leer_portapapeles()
+                self._guardar_portapapeles_usuario()
                 logging.info("Portapapeles del usuario guardado")
-            except PortapapelesNoDisponible as e:
+            except Exception as e:
                 raise EditorNoDisponible("No se pudo guardar el portapapeles original; se cancela la inyección: " + str(e)) from e
+
+    def _guardar_portapapeles_usuario(self):
+        self._antes_accion()
+        try:
+            estado = clipboard_state.capturar()
+        except Exception as error:
+            raise PortapapelesNoDisponible('No se pudieron conservar todos los formatos del portapapeles') from error
+        texto = self.leer_portapapeles()
+        self._antes_accion()
+        if clipboard_state.version() != estado['version']:
+            raise PortapapelesNoDisponible('El portapapeles cambió mientras se guardaba; no se sobrescribirá')
+        self._portapapeles_original = texto
+        self._formatos_portapapeles = estado
 
     def inyectar_codigo(self) -> None:
         """Reemplaza el contenido del editor con un bloque grande de código realista"""
@@ -882,8 +910,7 @@ class EditorInteractor(BaseAutomation):
                 self._cambiar_archivo(nombre)
 
         if not self.copiar_al_portapapeles(codigo):
-            logging.error("No se pudo copiar el código; se omite el pegado")
-            return
+            raise EditorNoDisponible('No se pudo copiar el código; se cancela la inyección')
 
         self._asegurar_destino()
 
@@ -945,12 +972,15 @@ class EditorInteractor(BaseAutomation):
         """Restaura el portapapeles del usuario al valor guardado en la primera inyección"""
         if self._portapapeles_original is None:
             return
-        try:
-            if self.portapapeles_es_del_bot(self.leer_portapapeles()):
-                self.copiar_al_portapapeles(self._portapapeles_original)
-                logging.info("Portapapeles del usuario restaurado")
-        except Exception as e:
-            logging.error(f"No se pudo restaurar el portapapeles: {e}")
+        if self.portapapeles_es_del_bot(self.leer_portapapeles()):
+            if self._formatos_portapapeles is not None:
+                self._antes_accion()
+                if not clipboard_state.restaurar(self._formatos_portapapeles,
+                                                 esperada=self.portapapeles_bot.get('version')):
+                    return  # Otra aplicación copió contenido después de la comprobación.
+            elif not self.copiar_al_portapapeles(self._portapapeles_original):
+                raise PortapapelesNoDisponible('No se pudo restaurar el portapapeles del usuario')
+            logging.info("Portapapeles del usuario restaurado")
 
     def conservar_portapapeles_usuario(self):
         try:
@@ -958,7 +988,7 @@ class EditorInteractor(BaseAutomation):
             if self.portapapeles_es_del_bot(contenido):
                 self.portapapeles_bot['ultimo'] = contenido
             else:
-                self._portapapeles_original = contenido
+                self._guardar_portapapeles_usuario()
         except PortapapelesNoDisponible as e:
             raise EditorNoDisponible(str(e)) from e
         self.portapapeles_bot.pop('copia_pendiente', None)

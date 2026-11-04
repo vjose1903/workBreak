@@ -218,7 +218,13 @@ class MonitorActividad:
 
     def _escuchar_mac(self):
         import Quartz as q
-        modificadores_usuario = set()
+        teclas_modificador = {
+            q.kCGEventFlagMaskCommand: (0x36, 0x37),
+            q.kCGEventFlagMaskShift: (0x38, 0x3C),
+            q.kCGEventFlagMaskAlternate: (0x3A, 0x3D),
+            q.kCGEventFlagMaskControl: (0x3B, 0x3E),
+            q.kCGEventFlagMaskSecondaryFn: (0x3F,),
+        }
 
         def esta_pulsada(identificador):
             tipo, codigo = identificador
@@ -226,7 +232,8 @@ class MonitorActividad:
                 return q.CGEventSourceKeyState(q.kCGEventSourceStateHIDSystemState, codigo)
             if tipo == 'mouse':
                 return q.CGEventSourceButtonState(q.kCGEventSourceStateHIDSystemState, codigo)
-            return codigo in modificadores_usuario
+            return any(q.CGEventSourceKeyState(q.kCGEventSourceStateHIDSystemState, tecla)
+                       for tecla in teclas_modificador.get(codigo, ()))
 
         self._esta_pulsada = esta_pulsada
         def pulsadas_fisicas():
@@ -249,6 +256,12 @@ class MonitorActividad:
         def evento(_proxy, tipo, evento, _contexto):
             if tipo in (q.kCGEventTapDisabledByTimeout, q.kCGEventTapDisabledByUserInput):
                 q.CGEventTapEnable(tap, True)
+                self.reconciliar_pulsadas()
+                with self._condicion:
+                    self._pulsadas.update(self._pulsadas_fisicas())
+                    self._pulsadas.update(('modificador', mascara) for mascara in teclas_modificador
+                                         if esta_pulsada(('modificador', mascara)))
+                self.registrar(causa='Observador reactivado; se comprueba el teclado físico', inmediata=True)
                 if not q.CGEventTapIsEnabled(tap):
                     with self._condicion:
                         self._error = "macOS desactivó la observación de teclado/mouse"
@@ -279,11 +292,6 @@ class MonitorActividad:
                                 0x3F: q.kCGEventFlagMaskSecondaryFn}
                     mascara = mascaras.get(codigo)
                     pulsada = bool(q.CGEventGetFlags(evento) & mascara) if mascara is not None else None
-                    if mascara is not None:
-                        if pulsada:
-                            modificadores_usuario.add(mascara)
-                        else:
-                            modificadores_usuario.discard(mascara)
                     self.registrar(('modificador', mascara) if mascara is not None else None, pulsada, causa, inmediata=True)
                 elif tipo in (q.kCGEventLeftMouseDown, q.kCGEventLeftMouseUp,
                                q.kCGEventRightMouseDown, q.kCGEventRightMouseUp,
@@ -311,7 +319,6 @@ class MonitorActividad:
         for mascara in (q.kCGEventFlagMaskCommand, q.kCGEventFlagMaskControl,
                         q.kCGEventFlagMaskShift, q.kCGEventFlagMaskAlternate, q.kCGEventFlagMaskSecondaryFn):
             if flags_iniciales & mascara:
-                modificadores_usuario.add(mascara)
                 self.registrar(('modificador', mascara), True, 'modificador mantenido al iniciar')
         self._listo.set()
         try:

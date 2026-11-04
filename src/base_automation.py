@@ -9,6 +9,7 @@ import time
 from typing import Optional
 
 import pyautogui
+import clipboard_state
 from process_locale import locale_utf8_disponible
 
 logging.basicConfig(
@@ -79,10 +80,16 @@ class BaseAutomation:
             self.monitor_actividad.comprobar()
 
     def _esperar(self, segundos):
+        restante = None if self._limpiando else self.tiempo_restante()
+        agotara = restante is not None and segundos >= restante
+        if restante is not None:
+            segundos = min(segundos, restante)
         if self.monitor_actividad is None:
             time.sleep(segundos)
         else:
             self.monitor_actividad.esperar_intervalo(segundos)
+        if agotara:
+            raise TiempoAgotado()
 
     def _ejecutar_proceso(self, cmd, timeout=10, **opciones):
         """Cancela únicamente el proceso auxiliar del bot si interviene el usuario."""
@@ -404,6 +411,7 @@ class BaseAutomation:
         exito = self._copiar_portapapeles_fallback(texto)
         if exito:
             self.portapapeles_bot["ultimo"] = texto
+            self.portapapeles_bot['version'] = clipboard_state.version()
             self.portapapeles_bot.pop('copia_pendiente', None)
             self.portapapeles_bot.pop('escritura_pendiente', None)
         return exito
@@ -452,10 +460,16 @@ class BaseAutomation:
         self._esperar(0.15)
         contenido = self.leer_portapapeles()
         self.portapapeles_bot['ultimo'] = contenido
+        self.portapapeles_bot['version'] = clipboard_state.version()
         self.portapapeles_bot.pop('copia_pendiente', None)
         return contenido
 
     def portapapeles_es_del_bot(self, contenido):
+        revision = self.portapapeles_bot.get('version')
+        if revision is not None and clipboard_state.version() != revision:
+            if self.portapapeles_bot.get('copia_pendiente'):
+                raise PortapapelesNoDisponible('Copia interrumpida sin confirmar: no se sobrescribirá el portapapeles actual')
+            return False
         if contenido == self.portapapeles_bot['ultimo']:
             return True
         if contenido == self.portapapeles_bot.get('escritura_pendiente'):

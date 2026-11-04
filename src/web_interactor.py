@@ -56,6 +56,11 @@ class WebInteractor(BaseAutomation):
         """Establece el navegador para interactuar"""
         self.browser = self.validar_browser(browser)
 
+    def invalidar_pestana(self):
+        self._pestana_bot = None
+        if self._contexto is not None:
+            self._contexto['intervenida'] = True
+
     def set_paginas(self, paginas: list) -> None:
         """Establece las páginas a las que navegar (descartando entradas vacías)"""
         normalizadas = list(dict.fromkeys(normalizar_web(p) for p in paginas if p and p.strip()))
@@ -206,8 +211,7 @@ class WebInteractor(BaseAutomation):
                 if not self._queda_tiempo(tiempo_final):
                     return False
                 if not self.copiar_al_portapapeles(pagina):
-                    logging.error(f"No se pudo copiar la URL de {pagina}, se omite")
-                    return
+                    raise RuntimeError('No se pudo copiar la URL; se cancela la navegación')
                 self._hotkey(self.cmd_key, 'l')
                 self._hotkey(self.cmd_key, 'v')
                 if not self._queda_tiempo(tiempo_final):

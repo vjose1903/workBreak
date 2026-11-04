@@ -144,6 +144,7 @@ class AutomationBot:
                     self.ejecutar_tareas(config.editor, paginas)
                     fallos_consecutivos = 0
                 except PausaPorActividad:
+                    self.web_interactor.invalidar_pestana()
                     self.editor_interactor.necesita_reposicionar = True
                     recuperar_editor = True
                     recuperar_portapapeles = True
@@ -214,6 +215,8 @@ class AutomationBot:
                 pass  # No reemplazar el portapapeles mientras el usuario utiliza el equipo.
             except Exception as e:
                 logging.error(f"Error restaurando el portapapeles: {e}")
+                if codigo_salida == 0:
+                    codigo_salida = 1
             monitor.detener()
             self.editor_interactor.monitor_actividad = None
             self.web_interactor.monitor_actividad = None

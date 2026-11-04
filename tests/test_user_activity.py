@@ -310,7 +310,7 @@ class MonitorActividadTest(unittest.TestCase):
         quartz.kCGEventFlagMaskAlternate = 1 << 19
         quartz.kCGEventFlagMaskSecondaryFn = 1 << 23
         quartz.CGEventSourceFlagsState.return_value = quartz.kCGEventFlagMaskShift
-        quartz.CGEventSourceKeyState.return_value = False
+        quartz.CGEventSourceKeyState.side_effect = lambda _estado, codigo: codigo == 0x38
         quartz.CGEventSourceButtonState.return_value = False
         quartz.CFRunLoopRunInMode.side_effect = lambda *_: monitor._detener.set()
         with patch.dict(sys.modules, {'Quartz': quartz}):
@@ -321,12 +321,18 @@ class MonitorActividadTest(unittest.TestCase):
         # Los flags de un atajo sintético posterior no borran la pulsación física inicial.
         quartz.CGEventSourceFlagsState.return_value = 0
         self.assertTrue(monitor._esta_pulsada(('modificador', 1 << 17)))
+        # Una liberación perdida también se recupera sin recibir flagsChanged.
+        quartz.CGEventSourceKeyState.side_effect = lambda *_: False
+        monitor.reconciliar_pulsadas()
+        self.assertNotIn(('modificador', 1 << 17), monitor._pulsadas)
+        monitor._pulsadas.add(('modificador', 1 << 17))
         quartz.kCGEventFlagsChanged = 'flags'
         quartz.kCGEventSourceUnixProcessID = 'pid'
         quartz.kCGEventSourceUserData = 'marca'
         quartz.kCGKeyboardEventKeycode = 'codigo'
         quartz.CGEventGetIntegerValueField.side_effect = lambda evento, campo: evento[campo]
         quartz.CGEventGetFlags.return_value = 0
+        quartz.CGEventSourceKeyState.side_effect = lambda *_: False
         callback = quartz.CGEventTapCreate.call_args.args[4]
         callback(None, 'flags', {'pid': os.getpid() + 1, 'codigo': 0x38, 'marca': 0}, None)
         self.assertNotIn(('modificador', 1 << 17), monitor._pulsadas)

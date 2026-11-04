@@ -10,6 +10,7 @@ from unittest.mock import MagicMock, patch
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'src'))
 
 from user_activity import MonitorActividad, PausaPorActividad
+import clipboard_state
 
 
 class FailSafeException(Exception):
@@ -33,6 +34,94 @@ with patch.dict(sys.modules, {'pyautogui': teclado}):
 
 
 class AutomationSafetyTest(unittest.TestCase):
+    def test_espera_larga_termina_en_el_limite_global(self):
+        self.editor.monitor_actividad = MagicMock()
+        with patch.object(self.editor, 'tiempo_restante', return_value=2):
+            with self.assertRaises(TiempoAgotado):
+                self.editor._esperar(600)
+        self.editor.monitor_actividad.esperar_intervalo.assert_called_once_with(2)
+
+    def test_grupo_dividido_recupera_solo_el_archivo_temporal(self):
+        self.editor.is_mac, self.editor.is_windows = True, False
+        self.editor.reutilizar_ventana = True
+        self.editor.editor_actual = 'vsCode'
+        self.editor.ruta_archivo = '/tmp/bot.tsx'
+        with patch.object(self.editor, '_activar_si_necesario', return_value=True), \
+                patch.object(editor_interactor, 'documento_editor',
+                             side_effect=['file:///tmp/bot.tsx', 'file:///tmp/usuario.tsx', 'file:///tmp/bot.tsx']), \
+                patch.object(self.editor, '_comando_abrir_editor', return_value=['code', '--reuse-window', '/tmp/bot.tsx']), \
+                patch.object(self.editor, 'ejecutar_comando', return_value=True) as abrir:
+            self.editor._asegurar_destino()
+        abrir.assert_called_once_with(['code', '--reuse-window', '/tmp/bot.tsx'])
+
+    def test_arranque_editor_espera_un_inicio_en_frio_lento(self):
+        reloj = [0.0]
+        def esperar(segundos):
+            reloj[0] += segundos
+        with patch('editor_interactor.time.monotonic', side_effect=lambda: reloj[0]), \
+                patch.object(self.editor, '_esperar', side_effect=esperar), \
+                patch.object(self.editor, 'activar_aplicacion', side_effect=lambda *_: reloj[0] >= 6):
+            self.assertTrue(self.editor._esperar_ventana_editor({'proceso': 'Code.exe', 'mac': 'Visual Studio Code'}))
+        self.assertGreaterEqual(reloj[0], 6)
+
+    def test_inyeccion_fallida_no_se_trata_como_turno_correcto(self):
+        self.editor._portapapeles_original = 'usuario'
+        with patch.object(self.editor, 'copiar_al_portapapeles', return_value=False):
+            with self.assertRaisesRegex(EditorNoDisponible, 'copiar el código'):
+                self.editor.inyectar_codigo()
+        teclado.hotkey.assert_not_called()
+
+    def test_restauracion_fallida_no_informa_exito(self):
+        self.editor._portapapeles_original = 'usuario'
+        self.editor.portapapeles_bot['ultimo'] = 'bot'
+        with patch.object(self.editor, 'leer_portapapeles', return_value='bot'), \
+                patch.object(self.editor, 'copiar_al_portapapeles', return_value=False), \
+                patch('editor_interactor.logging.info') as informar:
+            with self.assertRaises(PortapapelesNoDisponible):
+                self.editor.restaurar_portapapeles()
+        informar.assert_not_called()
+
+    def test_texto_igual_copiado_por_usuario_no_pertenece_al_bot(self):
+        self.editor.portapapeles_bot.update(ultimo='igual', version=1)
+        with patch('clipboard_state.version', return_value=2):
+            self.assertFalse(self.editor.portapapeles_es_del_bot('igual'))
+
+    def test_revision_nueva_no_atribuye_una_copia_interrumpida_al_usuario(self):
+        self.editor.portapapeles_bot.update(ultimo='marcador', version=1, copia_pendiente=True)
+        with patch('clipboard_state.version', return_value=2):
+            with self.assertRaises(PortapapelesNoDisponible):
+                self.editor.portapapeles_es_del_bot('selección no confirmada')
+
+    def test_copia_nativa_incompleta_impide_modificar_portapapeles(self):
+        with patch('clipboard_state.capturar', side_effect=RuntimeError('formato no disponible')), \
+                patch.object(self.editor, 'copiar_al_portapapeles') as copiar:
+            with self.assertRaises(EditorNoDisponible):
+                self.editor.inyectar_codigo()
+        copiar.assert_not_called()
+
+    def test_cualquier_pausa_invalida_pestana_aunque_ocurra_en_editor(self):
+        bot = AutomationBot(solicitar_detencion=lambda: False)
+        bot.web_interactor._pestana_bot = {'pagina': 'https://example.com', 'url': 'https://example.com'}
+        with patch('automation_bot.MonitorActividad.iniciar'), \
+                patch('automation_bot.MonitorActividad.esperar_inactividad', return_value=False), \
+                patch.object(bot.editor_interactor, 'mantener_despierto_iniciar'), \
+                patch.object(bot.editor_interactor, 'mantener_despierto_detener'), \
+                patch.object(bot.editor_interactor, 'guardar_portapapeles_original'), \
+                patch.object(bot.editor_interactor, 'restaurar_portapapeles'), \
+                patch.object(bot, 'ejecutar_tareas', side_effect=PausaPorActividad()), \
+                patch.object(bot, '_imprimir_y_cerrar', side_effect=lambda codigo: codigo):
+            self.assertEqual(bot.gestionar_ejecucion(Configuracion()), 0)
+        self.assertIsNone(bot.web_interactor._pestana_bot)
+
+    def test_fallo_de_limpieza_finaliza_con_error(self):
+        bot = AutomationBot(solicitar_detencion=lambda: True)
+        with patch('automation_bot.MonitorActividad.iniciar'), \
+                patch.object(bot.editor_interactor, 'mantener_despierto_iniciar'), \
+                patch.object(bot.editor_interactor, 'mantener_despierto_detener'), \
+                patch.object(bot.editor_interactor, 'restaurar_portapapeles', side_effect=PortapapelesNoDisponible('fallo')), \
+                patch.object(bot, '_imprimir_y_cerrar', side_effect=lambda codigo: codigo):
+            self.assertEqual(bot.gestionar_ejecucion(Configuracion()), 1)
+
     def test_detener_desde_interfaz_finaliza_y_ejecuta_limpieza_sin_enviar_entradas(self):
         bot = AutomationBot(solicitar_detencion=lambda: True)
         with patch('automation_bot.MonitorActividad.iniciar'), \
@@ -215,6 +304,12 @@ class AutomationSafetyTest(unittest.TestCase):
         self.assertIsNone(self.web._contexto)
 
     def setUp(self):
+        # Ninguna prueba de automatización lee ni escribe el portapapeles real.
+        for nombre, resultado in (('capturar', {'version': 1, 'items': []}),
+                                   ('version', 1), ('restaurar', True)):
+            parche = patch('clipboard_state.' + nombre, return_value=resultado)
+            parche.start()
+            self.addCleanup(parche.stop)
         historial = patch('automation_bot.guardar_configuracion')
         historial.start()
         self.addCleanup(historial.stop)
@@ -385,9 +480,10 @@ class AutomationSafetyTest(unittest.TestCase):
             self.editor.guardar_portapapeles_original()
         self.editor.portapapeles_bot['ultimo'] = 'https://example.com'
         with patch.object(self.editor, 'leer_portapapeles', return_value='https://example.com'), \
-                patch.object(self.editor, 'copiar_al_portapapeles', return_value=True) as copiar:
+                patch('clipboard_state.restaurar', return_value=True) as restaurar:
             self.editor.restaurar_portapapeles()
-        copiar.assert_called_once_with('texto del usuario')
+        restaurar.assert_called_once()
+        self.assertEqual(self.editor._portapapeles_original, 'texto del usuario')
 
     def test_foco_anterior_no_evita_reactivacion(self):
         with patch.object(self.editor, 'activar_aplicacion', return_value=False) as activar:
@@ -485,9 +581,10 @@ class AutomationSafetyTest(unittest.TestCase):
         with patch.object(self.editor, 'leer_portapapeles', return_value='texto nuevo del usuario'):
             self.editor.conservar_portapapeles_usuario()
         with patch.object(self.editor, 'leer_portapapeles', return_value='bot'), \
-                patch.object(self.editor, 'copiar_al_portapapeles', return_value=True) as copiar:
+                patch('clipboard_state.restaurar', return_value=True) as restaurar:
             self.editor.restaurar_portapapeles()
-        copiar.assert_called_once_with('texto nuevo del usuario')
+        restaurar.assert_called_once()
+        self.assertEqual(self.editor._portapapeles_original, 'texto nuevo del usuario')
 
     def test_portapapeles_ajeno_no_se_sobrescribe_al_salir(self):
         self.editor._portapapeles_original = 'antiguo'
@@ -809,7 +906,7 @@ class AutomationSafetyTest(unittest.TestCase):
                 patch.object(editor_interactor, 'documento_editor',
                              return_value='file:///tmp/workbreak_unico.tsx') as documento:
             self.editor._asegurar_destino()
-        documento.assert_called_once_with('com.microsoft.VSCode')
+        self.assertEqual(documento.call_args_list, [unittest.mock.call('com.microsoft.VSCode')] * 2)
 
     def test_archivo_del_usuario_con_el_mismo_nombre_no_se_acepta(self):
         self.editor.editor_actual = 'vsCode'
@@ -1149,7 +1246,8 @@ class AutomationSafetyTest(unittest.TestCase):
     def test_copia_fallida_no_cierra_una_pestana_sin_identidad_confirmada(self):
         with patch.object(self.web, 'activar_navegador', return_value=True), \
                 patch.object(self.web, 'copiar_al_portapapeles', return_value=False):
-            self.web._procesar_pagina('https://example.com')
+            with self.assertRaisesRegex(RuntimeError, 'copiar la URL'):
+                self.web._procesar_pagina('https://example.com')
         self.assertEqual(teclado.hotkey.call_args_list,
                          [unittest.mock.call(self.web.cmd_key, 't')])
 
@@ -1177,7 +1275,8 @@ class AutomationSafetyTest(unittest.TestCase):
                 patch.object(self.editor, 'copiar_al_portapapeles') as copiar:
             with self.assertRaises(EditorNoDisponible):
                 self.editor.conservar_portapapeles_usuario()
-            self.editor.restaurar_portapapeles()
+            with self.assertRaises(PortapapelesNoDisponible):
+                self.editor.restaurar_portapapeles()
         copiar.assert_not_called()
         self.assertEqual(self.editor._portapapeles_original, 'antiguo')
 
