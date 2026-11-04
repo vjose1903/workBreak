@@ -24,6 +24,51 @@ class MenuMacTest(unittest.TestCase):
         guardar.start()
         self.addCleanup(guardar.stop)
 
+    def test_duracion_editor_guarda_rangos_y_conserva_ajustes_ocultos(self):
+        from mac_menu import DialogoSegundos
+        from timing_config import CLAVES_EDITOR
+        dialogo = DialogoSegundos.alloc().init()
+        dialogo.preparar('editor', {'debounce': 3.5, 'editor_reanudar': [2, 4]})
+        self.assertEqual(set(dialogo.rangos), set(CLAVES_EDITOR))
+        self.assertNotIn('editor_reanudar', dialogo.rangos)
+        for clave, valores in (('editor', ('62.5', '120')), ('editor_alternado', ('1', '7'))):
+            for campo, valor in zip(dialogo.rangos[clave].campos, valores):
+                campo.setStringValue_(valor)
+        with patch('mac_menu.NSApplication') as app:
+            dialogo.guardar_(None)
+            app.sharedApplication.return_value.stopModalWithCode_.assert_called_once_with(1000)
+        self.assertEqual(dialogo.resultado['editor'], [62.5, 120])
+        self.assertEqual(dialogo.resultado['editor_alternado'], [1, 7])
+        self.assertEqual(dialogo.resultado['debounce'], 3.5)
+        self.assertEqual(dialogo.resultado['editor_reanudar'], [2, 4])
+
+    def test_rango_rechaza_valores_invalidos_sin_cerrar(self):
+        from mac_menu import DialogoSegundos
+        for valor in ('nan', '-1', '500'):
+            dialogo = DialogoSegundos.alloc().init()
+            dialogo.preparar('editor', None)
+            dialogo.rangos['editor'].campos[0].setStringValue_(valor)
+            with patch('mac_menu.NSApplication') as app:
+                dialogo.guardar_(None)
+                app.sharedApplication.return_value.stopModalWithCode_.assert_not_called()
+            self.assertIsNone(dialogo.resultado)
+            self.assertTrue(dialogo.error.stringValue())
+
+    def test_slider_impide_cruzar_extremos_y_sincroniza_campos(self):
+        from mac_time_range import RangoTiempo
+        fila = RangoTiempo.alloc().initWithFrame_(((0, 0), (360, 84)))
+        fila.preparar('editor', 'Editor', [60, 240])
+        fila.slider.extremo = 0
+        fila.slider.cambiar(300)
+        self.assertEqual(fila.leer(), [240, 240])
+        fila.slider.extremo = 1
+        fila.slider.cambiar(10)
+        self.assertEqual(fila.leer(), [240, 240])
+        fila.campos[1].setStringValue_('1200')
+        fila.controlTextDidChange_(None)
+        self.assertGreaterEqual(fila.slider.maximo, 1200)
+        self.assertEqual(fila.slider.valores, [240, 1200])
+
     def test_detencion_usa_notificacion_o_aviso_interno(self):
         with patch.object(self.menu, 'aviso') as aviso:
             self.menu.notificar_detencion('Error', 'Motivo')

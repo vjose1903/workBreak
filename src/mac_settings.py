@@ -96,8 +96,7 @@ class VentanaConfiguracion(NSObject):
                 posicion = control.frame().origin
                 control.setFrameOrigin_((posicion.x, posicion.y + 100))
         self.controles_tiempo = {}
-        for clave, vista, y in (('debounce', actividad, 30), ('editor', editor, 60),
-                                ('editor_alternado', editor, 22), ('navegador', navegador, 30)):
+        for clave, vista, y in (('debounce', actividad, 30), ('editor', editor, 30), ('navegador', navegador, 30)):
             control = self.boton(vista, '', 20, y, 620, 'temporizacion:' + clave)
             self.controles_tiempo[clave] = control
         self.etiqueta(raiz, 'Cambios guardados automáticamente.', 28, 27, 490, 25)
@@ -175,7 +174,8 @@ class VentanaConfiguracion(NSObject):
             control.setState_(int(acciones_config(self.config, entorno)[clave]))
             control.setEnabled_(not bloqueada and not (solo_web if entorno == 'editor' else solo_editor))
         for clave, control in self.controles_tiempo.items():
-            control.setTitle_(TITULOS[clave] + ': ' + texto_tiempo(clave, self.config.get('temporizacion')) + '…')
+            control.setTitle_('Duración del editor…' if clave == 'editor' else
+                              TITULOS[clave] + ': ' + texto_tiempo(clave, self.config.get('temporizacion')) + '…')
             control.setEnabled_(not bloqueada and not (
                 solo_web if clave.startswith('editor') else solo_editor if clave == 'navegador' else False))
         self.tiempo.setTitle_('Tiempo: ' + formatear_tiempo(self.config.get('tiempo')) + '…')

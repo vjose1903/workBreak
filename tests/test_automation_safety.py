@@ -411,6 +411,25 @@ class AutomationSafetyTest(unittest.TestCase):
         proceso.terminate.assert_called_once()
         proceso.kill.assert_not_called()
 
+    def test_fases_internas_usan_sus_rangos_configurados(self):
+        from timing_config import temporizacion_config
+        self.editor.temporizacion = temporizacion_config({
+            'editor_escritura': [3, 3], 'editor_mouse': [7, 7],
+            'editor_movimiento': [0.8, 0.8], 'editor_caracter': [0.02, 0.02]})
+        self.assertEqual(self.editor._duracion_fase_escritura(), 3)
+        self.assertEqual(self.editor._duracion_fase_mouse(), 7)
+        self.assertEqual(self.editor._duracion_configurada('editor_movimiento'), 0.8)
+        self.assertEqual(self.editor._duracion_configurada('editor_caracter'), 0.02)
+
+    def test_pausa_scroll_navegador_es_acotada_y_respeta_interrupcion(self):
+        from timing_config import temporizacion_config
+        self.web.temporizacion = temporizacion_config({'navegador_pausa_scroll': [4, 4]})
+        with patch.object(self.web, '_esperar', side_effect=PausaPorActividad) as esperar, \
+                patch('web_interactor.time.monotonic', return_value=10):
+            with self.assertRaises(PausaPorActividad):
+                self.web._pausa_accion('navegador_pausa_scroll', 12)
+        esperar.assert_called_once_with(2)
+
     def test_turnos_respetan_rangos_configurados_en_segundos(self):
         from timing_config import temporizacion_config
         bot = AutomationBot.__new__(AutomationBot)

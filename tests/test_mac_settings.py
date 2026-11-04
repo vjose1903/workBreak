@@ -36,8 +36,10 @@ class ConfiguracionMacTest(unittest.TestCase):
         with patch('mac_menu.DialogoSegundos') as dialogo:
             dialogo.alloc.return_value.init.return_value.mostrar.return_value = tiempos
             self.ventana.accion_(self.ventana.controles_tiempo['editor'])
-        self.assertEqual(cargar_preferencias()['temporizacion'], tiempos)
-        self.assertIn('1–7 s', self.ventana.controles_tiempo['editor'].title())
+        from timing_config import temporizacion_config
+        self.assertEqual(cargar_preferencias()['temporizacion'], temporizacion_config(tiempos))
+        self.assertEqual(self.ventana.controles_tiempo['editor'].title(), 'Duración del editor…')
+        self.assertNotIn('editor_alternado', self.ventana.controles_tiempo)
         self.menu.controlador.activo = True
         self.ventana.refrescar()
         self.assertTrue(all(not c.isEnabled() for c in self.ventana.controles_tiempo.values()))

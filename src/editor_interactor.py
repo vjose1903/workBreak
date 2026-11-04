@@ -461,7 +461,7 @@ class EditorInteractor(BaseAutomation):
             if not self._queda_tiempo_editor(tiempo_final):
                 break
             self._editar_bloque_real(fin)
-            self._esperar(random.uniform(0.4, 1.8))
+            self._esperar(self._duracion_configurada('editor_bloque'))
 
     def _archivo_vencido(self) -> bool:
         return (self._archivo_desde is not None
@@ -488,8 +488,10 @@ class EditorInteractor(BaseAutomation):
             while time.monotonic() < fin:
                 if not self._queda_tiempo_editor(tiempo_final):
                     break
-                self._movimiento_fase_mouse()
-                self._esperar(random.uniform(0.4, 2.0))
+                accion = self._movimiento_fase_mouse()
+                clave = {'click': 'editor_pausa_click', 'scroll': 'editor_pausa_scroll',
+                         'mover_mouse': 'editor_pausa_mover_mouse'}.get(accion, 'editor_pausa_mover_mouse')
+                self._esperar(min(self._duracion_configurada(clave), max(0, fin - time.monotonic())))
         finally:
             self._ventana_mouse_editor = None
 
@@ -506,13 +508,13 @@ class EditorInteractor(BaseAutomation):
         try:
             if acciones['scroll']:
                 self._inicio_archivo()
-            self._esperar(random.uniform(0.2, 0.5))
+            self._esperar(self._duracion_configurada('editor_preparacion'))
             centro = self._configurar_area_mouse(self._rectangulo_ventana_editor())
             if acciones['mover_mouse']:
-                self._move_to(*centro, duration=random.uniform(0.2, 0.6))
+                self._move_to(*centro, duration=self._duracion_configurada('editor_movimiento'))
             if acciones['click'] and self._mouse_en_area_segura():
                 self._click()
-            self._esperar(random.uniform(0.2, 0.5))
+            self._esperar(self._duracion_configurada('editor_preparacion'))
         except pyautogui.FailSafeException:
             raise
         except Exception as e:
@@ -526,7 +528,7 @@ class EditorInteractor(BaseAutomation):
         centro = self._configurar_area_mouse(self._rectangulo_ventana_editor())
         if not self._mouse_en_area_segura():
             if acciones['mover_mouse']:
-                self._move_to(*centro, duration=0.3)
+                self._move_to(*centro, duration=self._duracion_configurada('editor_centrado'))
             else:
                 return
         opciones = [clave for clave in ('click', 'scroll', 'mover_mouse') if acciones[clave]]
@@ -540,7 +542,8 @@ class EditorInteractor(BaseAutomation):
         else:
             x = random.randint(-self.EDITOR_WINDOW_OFFSET, self.EDITOR_WINDOW_OFFSET)
             y = random.randint(-self.EDITOR_WINDOW_OFFSET, self.EDITOR_WINDOW_OFFSET)
-            self._move_rel(x, y, duration=random.uniform(0.2, 0.6))
+            self._move_rel(x, y, duration=self._duracion_configurada('editor_movimiento'))
+        return accion
 
     def _rectangulo_ventana_editor(self):
         """Devuelve (x, y, ancho, alto) de la ventana del editor o None si no se puede obtener"""
@@ -561,6 +564,8 @@ class EditorInteractor(BaseAutomation):
 
     def _duracion_fase_escritura(self) -> float:
         """Duración aleatoria de la fase de escritura (corta, media, larga)"""
+        if self.temporizacion['editor_escritura'] != [4, 115]:
+            return self._duracion_configurada('editor_escritura')
         return random.choice([
             random.uniform(4, 8),
             random.uniform(10, 20),
@@ -570,6 +575,8 @@ class EditorInteractor(BaseAutomation):
 
     def _duracion_fase_mouse(self) -> float:
         """Duración aleatoria de la fase de mouse"""
+        if self.temporizacion['editor_mouse'] != [2, 16]:
+            return self._duracion_configurada('editor_mouse')
         return random.choice([
             random.uniform(2, 4),
             random.uniform(5, 9),
@@ -631,7 +638,7 @@ class EditorInteractor(BaseAutomation):
             self._verificar_seleccion_linea(linea)
         else:
             self._fin_linea()
-            self._esperar(random.uniform(0.05, 0.15))
+            self._esperar(self._duracion_configurada('editor_reanudar'))
 
         if self.desplazamiento:
             logging.info("Reanudando línea pendiente: %s", json.dumps({
@@ -652,7 +659,7 @@ class EditorInteractor(BaseAutomation):
             self._insertar_caracter(c)
             self.desplazamiento += 1
             self._lineas_observadas[self.inicio_bloque + self.indice_linea + 1] = linea[:self.desplazamiento]
-            self._esperar(random.uniform(0.03, 0.08))
+            self._esperar(self._duracion_configurada('editor_caracter'))
 
         # Cada carácter ya se escribió; un segundo reemplazo puede
         # seleccionar el salto de línea y unir accidentalmente la línea siguiente.
@@ -886,7 +893,7 @@ class EditorInteractor(BaseAutomation):
         self.lineas_actuales = codigo.splitlines()
         self._fases_con_archivo = 0
         self._archivo_desde = time.monotonic()
-        self._duracion_archivo = random.uniform(120, 300)
+        self._duracion_archivo = self._duracion_configurada('editor_archivo')
         self._lineas_observadas.clear()
         self.bloque_actual = None
         self.inicio_bloque = 0

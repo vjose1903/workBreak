@@ -1,6 +1,7 @@
 """Interfaz nativa de la barra de menús de macOS."""
 import os
-from timing_config import temporizacion_config, texto_tiempo, TITULOS
+from mac_time_range import RangoTiempo
+from timing_config import temporizacion_config, texto_tiempo, TITULOS, CLAVES_EDITOR, CLAVES_NAVEGADOR
 import copy
 import fcntl
 import hashlib
@@ -16,7 +17,7 @@ from AppKit import (
     NSAlert, NSApplication, NSApplicationActivationPolicyAccessory, NSFont, NSImage, NSMenu,
     NSMenuItem, NSModalPanelRunLoopMode, NSOpenPanel, NSScrollView, NSStatusBar,
     NSTextField, NSTextView, NSVariableStatusItemLength, NSWorkspace,
-    NSButton, NSColor, NSStepper, NSSwitch, NSTableColumn, NSTableView, NSView,
+    NSBox, NSButton, NSColor, NSStepper, NSSwitch, NSTableColumn, NSTableView, NSView,
 )
 from Foundation import NSObject, NSRunLoop, NSRunLoopCommonModes, NSTimer, NSURL, NSUserDefaults
 
@@ -40,47 +41,163 @@ def normalizar_webs(texto):
 
 class DialogoSegundos(NSObject):
     @objc.python_method
-    def mostrar(self, clave, valores):
-        actuales = temporizacion_config(valores)
-        valor = actuales[clave]
-        numeros = [valor] if clave == 'debounce' else valor
-        alerta = NSAlert.alloc().init()
-        alerta.setMessageText_(TITULOS[clave])
-        alerta.setInformativeText_(
-            'Segundos sin actividad antes de reanudar. 0 reanuda al soltar las teclas o botones.'
+    def preparar(self, clave, valores):
+        self.actuales = temporizacion_config(valores)
+        self.resultado = None
+        self.clave = clave
+        self.inicio_campos = 54 if clave == 'debounce' else 100
+        self.grupos = {}
+        self.rangos = {}
+        self.campos, self.controles = [], []
+        self.alerta = NSAlert.alloc().init()
+        self.alerta.setMessageText_('Duración del editor' if clave in ('editor', 'editor_alternado') else TITULOS[clave])
+        self.alerta.setInformativeText_(
+            'Tiempo sin actividad antes de reanudar. Cero reanuda al soltar las teclas o botones.'
             if clave == 'debounce' else
-            'Duración aleatoria en segundos por turno. Usa el mismo mínimo y máximo para una duración fija. '
-            'Las pausas y la preparación de la aplicación pueden alargar el tiempo transcurrido.')
-        alerta.addButtonWithTitle_('Guardar')
-        alerta.addButtonWithTitle_('Cancelar')
-        vista = NSView.alloc().initWithFrame_(((0, 0), (360, 110)))
-        campos = []
-        for indice, numero in enumerate(numeros):
-            titulo = 'Segundos' if clave == 'debounce' else ('Mínimo', 'Máximo')[indice]
-            x = indice * 180
+            'Ajusta los extremos del rango. Los valores iguales fijan la duración.')
+        icono = NSImage.alloc().initWithContentsOfFile_(str(recurso('assets/icon.svg')))
+        if icono is not None:
+            self.alerta.setIcon_(icono)
+        guardar = self.alerta.addButtonWithTitle_('Guardar')
+        guardar.setTarget_(self)
+        guardar.setAction_('guardar:')
+        self.alerta.addButtonWithTitle_('Cancelar')
+        editor = clave in ('editor', 'editor_alternado')
+        secciones = [(k, 'Sin navegador' if k == 'editor' else 'Con navegador' if k == 'editor_alternado' else TITULOS[k])
+                     for k in (CLAVES_EDITOR if editor else CLAVES_NAVEGADOR)] if clave != 'debounce' else []
+        altura = 144 if clave == 'debounce' else 560 if editor else 292
+        ancho = 540 if clave == 'debounce' else 808
+        vista = NSView.alloc().initWithFrame_(((0, 0), (ancho, altura)))
+        if clave == 'debounce':
+            self.encabezados(vista, 110)
+            self.fila(vista, 'debounce', 0, '', self.actuales['debounce'], 44)
+        else:
+            columnas = [(secciones[:2], 0, 'Duración de los turnos' if editor else 'Turnos y visitas'),
+                        (secciones[2:], 412, 'Acciones principales')]
+            self.tarjetas_tiempo = []
+            for filas, x, titulo in columnas:
+                tarjeta = NSBox.alloc().initWithFrame_(((x, 40), (396, altura - 40)))
+                tarjeta.setBoxType_(4)
+                tarjeta.setTitlePosition_(0)
+                tarjeta.setContentViewMargins_((16, 12))
+                tarjeta.setCornerRadius_(10)
+                tarjeta.setBorderWidth_(1)
+                tarjeta.setBorderColor_(NSColor.separatorColor())
+                tarjeta.setFillColor_(NSColor.controlBackgroundColor())
+                tarjeta.setTransparent_(False)
+                vista.addSubview_(tarjeta)
+                self.tarjetas_tiempo.append(tarjeta)
+                contenido = tarjeta.contentView()
+                alto = contenido.bounds().size.height
+                encabezado = NSTextField.labelWithString_(titulo)
+                encabezado.setFont_(NSFont.boldSystemFontOfSize_(15))
+                encabezado.setFrame_(((0, alto - 28), (360, 22)))
+                contenido.addSubview_(encabezado)
+                for indice, (entorno, nombre) in enumerate(filas):
+                    fila = RangoTiempo.alloc().initWithFrame_(((0, alto - 124 - indice * 88), (360, 84)))
+                    fila.preparar(entorno, nombre, self.actuales[entorno])
+                    contenido.addSubview_(fila)
+                    self.rangos[entorno] = fila
+                    self.campos.extend(fila.campos)
+                if editor and x == 0:
+                    ayuda = NSTextField.wrappingLabelWithString_('Arrastra los extremos o escribe los valores en segundos.')
+                    ayuda.setTextColor_(NSColor.secondaryLabelColor())
+                    ayuda.setFrame_(((0, 16), (350, 46)))
+                    contenido.addSubview_(ayuda)
+        self.error = NSTextField.wrappingLabelWithString_('')
+        self.error.setFrame_(((0, 0), (ancho, 28)))
+        self.error.setTextColor_(NSColor.systemRedColor())
+        vista.addSubview_(self.error)
+        self.alerta.setAccessoryView_(vista)
+        self.alerta.window().setInitialFirstResponder_(self.campos[0])
+
+    @objc.python_method
+    def encabezados(self, vista, y):
+        for indice, titulo in enumerate(('Horas', 'Minutos', 'Segundos')):
             etiqueta = NSTextField.labelWithString_(titulo)
-            etiqueta.setFrame_(((x, 78), (160, 22)))
+            etiqueta.setTextColor_(NSColor.secondaryLabelColor())
+            etiqueta.setFrame_(((self.inicio_campos + indice * 150, y), (130, 20)))
             vista.addSubview_(etiqueta)
-            campo = NSTextField.alloc().initWithFrame_(((x, 42), (160, 30)))
-            campo.setStringValue_(f'{numero:g}')
-            campo.setAccessibilityLabel_(titulo + ' en segundos')
+
+    @objc.python_method
+    def fila(self, vista, clave, limite, titulo, segundos, y):
+        etiqueta = NSTextField.labelWithString_(titulo)
+        etiqueta.setFrame_(((0, y + 18), (90, 24)))
+        vista.addSubview_(etiqueta)
+        valores = (int(segundos // 3600), int(segundos % 3600 // 60), segundos % 60)
+        campos = []
+        for indice, valor in enumerate(valores):
+            x = self.inicio_campos + indice * 150
+            campo = NSTextField.alloc().initWithFrame_(((x, y), (106, 58)))
+            campo.setFont_(NSFont.monospacedDigitSystemFontOfSize_weight_(36, 0))
+            campo.setTextColor_(NSColor.controlAccentColor())
+            campo.setAlignment_(2)
+            campo.setStringValue_(f'{int(valor):02d}' if float(valor).is_integer() else f'{valor:g}')
+            campo.setAccessibilityLabel_(f'{TITULOS[clave]} {titulo}: ' + ('Horas', 'Minutos', 'Segundos')[indice])
+            campo.setTag_(len(self.campos))
+            campo.setDelegate_(self)
             vista.addSubview_(campo)
+            control = NSStepper.alloc().initWithFrame_(((x + 112, y + 12), (20, 30)))
+            control.setMinValue_(0)
+            control.setMaxValue_(9999 if indice == 0 else 59 if indice == 1 else 59.999)
+            control.setIncrement_(1)
+            control.setDoubleValue_(valor)
+            control.setValueWraps_(False)
+            control.setTag_(len(self.campos))
+            control.setTarget_(self)
+            control.setAction_('cambiar:')
+            control.setAccessibilityLabel_(campo.accessibilityLabel())
+            vista.addSubview_(control)
+            self.campos.append(campo)
+            self.controles.append(control)
             campos.append(campo)
-        error = NSTextField.wrappingLabelWithString_('')
-        error.setFrame_(((0, 0), (360, 36)))
-        error.setTextColor_(NSColor.systemRedColor())
-        vista.addSubview_(error)
-        alerta.setAccessoryView_(vista)
+        self.grupos[(clave, limite)] = campos
+
+    def cambiar_(self, sender):
+        valor = sender.doubleValue()
+        self.campos[sender.tag()].setStringValue_(f'{int(valor):02d}' if valor.is_integer() else f'{valor:g}')
+        self.error.setStringValue_('')
+
+    def controlTextDidChange_(self, notificacion):
+        campo = notificacion.object()
+        try:
+            valor = float(str(campo.stringValue()).replace(',', '.'))
+            control = self.controles[campo.tag()]
+            if 0 <= valor <= control.maxValue():
+                control.setDoubleValue_(valor)
+        except ValueError:
+            pass
+
+    def guardar_(self, _sender):
+        nuevos = copy.deepcopy(self.actuales)
+        try:
+            for clave, fila in self.rangos.items():
+                nuevos[clave] = fila.leer()
+            for (clave, limite), campos in self.grupos.items():
+                textos = [str(c.stringValue()).strip().replace(',', '.') for c in campos]
+                if any(not t.isdecimal() or len(t) > 4 for t in textos[:2]):
+                    raise ValueError('Introduce horas enteras de 0 a 9999 y minutos de 0 a 59.')
+                horas, minutos, segundos = int(textos[0]), int(textos[1]), float(textos[2])
+                if not (0 <= horas <= 9999 and 0 <= minutos <= 59 and 0 <= segundos < 60):
+                    raise ValueError('Minutos y segundos deben ser menores que 60 y no negativos.')
+                total = horas * 3600 + minutos * 60 + segundos
+                if clave == 'debounce':
+                    nuevos[clave] = total
+                else:
+                    nuevos[clave][limite] = total
+            self.resultado = temporizacion_config(nuevos)
+        except ValueError as error:
+            self.error.setStringValue_(str(error))
+            return
+        NSApplication.sharedApplication().stopModalWithCode_(1000)
+
+    @objc.python_method
+    def mostrar(self, clave, valores):
+        self.preparar(clave, valores)
         NSApplication.sharedApplication().activateIgnoringOtherApps_(True)
-        alerta.window().setInitialFirstResponder_(campos[0])
-        while alerta.runModal() == 1000:
-            try:
-                nuevos = [float(str(c.stringValue()).strip().replace(',', '.')) for c in campos]
-                return temporizacion_config({**actuales, clave: nuevos[0] if clave == 'debounce' else nuevos})
-            except ValueError:
-                error.setStringValue_('Usa segundos válidos, mínimo mayor que 0 y máximo ≥ mínimo.'
-                                      if clave != 'debounce' else 'Usa segundos válidos, mayores o iguales a 0.')
-        return None
+        respuesta = self.alerta.runModal()
+        self.alerta.window().orderOut_(None)
+        return self.resultado if respuesta == 1000 else None
 
 
 class DialogoTiempo(NSObject):
@@ -491,9 +608,7 @@ class MenuWorkBreak(NSObject):
             ruta = self.config.get('directorio', '')
             self.item(fuente, Path(ruta).name, 'fuente:directorio', marcado=True).setToolTip_(ruta)
 
-        for clave in ('editor', 'editor_alternado'):
-            self.item(editores, TITULOS[clave] + '… (' + texto_tiempo(clave, self.config.get('temporizacion')) + ')',
-                      'temporizacion:' + clave)
+        self.item(editores, 'Duración…', 'temporizacion:editor')
         editores.addItem_(NSMenuItem.separatorItem())
         instalados = editores_instalados()
         for clave, titulo in instalados.items():
@@ -820,7 +935,7 @@ class MenuWorkBreak(NSObject):
                 raise ValueError('Temporización desconocida')
             valores = DialogoSegundos.alloc().init().mostrar(clave, config.get('temporizacion'))
             if valores is not None:
-                config['temporizacion'] = valores
+                config['temporizacion'] = temporizacion_config(valores)
         elif comando == 'tiempo':
             dialogo = DialogoTiempo.alloc().init()
             dialogo.preparar(config.get('tiempo'))

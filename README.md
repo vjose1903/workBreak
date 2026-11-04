@@ -193,7 +193,7 @@ Al pulsar **Iniciar bot**, la interfaz comprueba Accesibilidad y Monitorización
 
 La app instalada solicita permiso para notificaciones al iniciar el bot. Si la corrida termina por un error, una parada de emergencia o una salida inesperada del proceso, muestra una notificación con sonido y una indicación para consultar el registro. No notifica pausas por actividad, paradas manuales ni finalizaciones normales. Si las notificaciones están denegadas o falla el envío, muestra un aviso dentro de WorkBreak. La presentación de banners y sonidos depende de la configuración de notificaciones y de Concentración de macOS.
 
-Los tiempos se guardan en las preferencias y en las configuraciones recientes. Se editan en segundos desde **Configuración → Actividad → Pausa por inactividad**, **Configuración → Editor** y **Configuración → Navegador**, o desde los controles equivalentes del menú principal y sus submenús.
+Los tiempos se guardan en las preferencias y en las configuraciones recientes. Se editan con campos de horas, minutos y segundos desde **Configuración → Actividad → Pausa por inactividad**, **Configuración → Editor** y **Configuración → Navegador**, o desde los controles equivalentes del menú principal y sus submenús.
 
 | Parámetro | Predeterminado |
 |---|---|
@@ -202,7 +202,7 @@ Los tiempos se guardan en las preferencias y en las configuraciones recientes. S
 | Turno del editor al alternar con navegador | 30–90 s |
 | Turno del navegador | 30–60 s |
 
-Los rangos admiten decimales, requieren mínimo mayor que cero y máximo mayor o igual al mínimo. Un rango con valores iguales fija la duración. Debounce admite cero. Los cambios se aplican en la siguiente corrida; la configuración se bloquea mientras el bot está activo. Los rangos controlan los turnos de cada aplicación, incluyendo las acciones habilitadas; la preparación, las pausas y una operación ya iniciada pueden prolongar el tiempo de reloj. Las subfases internas de escritura y mouse conservan sus duraciones, limitadas por el final del turno.
+El editor tiene un único botón «Duración…» y un modal compacto de dos columnas. La izquierda contiene solo los turnos sin navegador y con navegador. La derecha contiene los ajustes principales: fase de escritura, fase de mouse, pausa entre caracteres y pausas después de click y scroll. Cada fila usa un slider doble (mínimo y máximo) y campos numéricos en segundos; admite teclado y valores exactos, incluso fuera de la escala inicial del slider. El navegador muestra únicamente turno total, visita por página, duración del movimiento y pausa entre ciclos. Los ajustes secundarios de configuraciones anteriores se conservan sin mostrarlos. El debounce mantiene sus campos de horas, minutos y segundos. Los cambios se aplican en la siguiente corrida; no se puede configurar durante una sesión activa. Las comprobaciones de foco, documento y portapapeles conservan sus esperas de seguridad. Las fases y movimientos requieren tiempos positivos, las pausas permiten cero y los extremos iguales fijan el tiempo. La preparación, las pausas por actividad y una operación ya iniciada pueden prolongar el tiempo de reloj.
 
 **Al usar tu teclado o mouse, el bot cede el control.** Cualquier tecla, incluidos los modificadores, activa la pausa desde el inicio. Después del margen inicial del mouse, cualquier movimiento, clic o scroll reinicia la pausa de inactividad configurada (**10 segundos por defecto**). Si sigues utilizando la PC, la cuenta vuelve a empezar; si mantienes una tecla o botón pulsado, la espera comienza cuando lo sueltas.
 
@@ -383,3 +383,21 @@ Los archivos fuente deben ser archivos regulares de hasta **2 MiB**, con entre *
 Las duraciones guardadas se validan antes de cargarse: de un segundo hasta **9999:59:59**, o tiempo indefinido. Se descartan configuraciones inválidas sin impedir el arranque.
 
 Las preferencias y el historial se leen con un límite de **2 MiB**. Los archivos no regulares o con anidamiento JSON excesivo se descartan sin bloquear el arranque. El proceso antirreposo queda ligado al PID del bot para terminar también si este sale inesperadamente.
+
+Los nuevos tiempos internos conservan estos valores predeterminados (segundos):
+
+| Entorno | Tiempo | Predeterminado |
+|---|---|---|
+| Editor | Escritura | 4–115, conservando el patrón original de fases cortas/medias/largas mientras el rango no se personaliza |
+| Editor | Mouse | 2–16, conservando el patrón original mientras el rango no se personaliza |
+| Editor | Entre caracteres / bloques | 0.03–0.08 / 0.4–1.8 |
+| Editor | Retomar línea / preparar mouse | 0.05–0.15 / 0.2–0.5 |
+| Editor | Movimiento / centrado inicial | 0.2–0.6 / 0.3 |
+| Editor | Después de click, scroll o movimiento | 0.4–2 para cada acción |
+| Editor | Rotación por tiempo del archivo | 120–300; también se conserva la rotación por número de fases |
+| Navegador | Visita por página | 10–20 |
+| Navegador | Movimiento / centrado inicial | 0.6–1.2 / 0.3 |
+| Navegador | Entre ciclos | 1–3 |
+| Navegador | Pausa adicional de click / scroll | 0 / 0 |
+
+Las pausas de cadencia admiten cero; las fases, visitas y movimientos requieren una duración positiva. Los ajustes internos se guardan y restauran junto con el resto de la configuración.

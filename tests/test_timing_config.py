@@ -18,7 +18,7 @@ class TemporizacionTest(unittest.TestCase):
         tiempos = {'debounce': 3.5, 'editor': [1, 7], 'editor_alternado': [1, 7], 'navegador': [2, 4]}
         registro = _config_a_dict(Configuracion(temporizacion=tiempos))
         self.assertTrue(_registro_valido(registro))
-        self.assertEqual(_dict_a_config(registro).temporizacion, tiempos)
+        self.assertEqual(_dict_a_config(registro).temporizacion, temporizacion_config(tiempos))
 
     def test_rechaza_rangos_y_numeros_invalidos(self):
         for tiempos in ({'debounce': -1}, {'debounce': True}, {'debounce': 10 ** 400}, {'debounce': float('nan')},
@@ -33,3 +33,11 @@ class TemporizacionTest(unittest.TestCase):
         tiempos = temporizacion_config({'debounce': 0, 'editor': [1, 1]})
         self.assertEqual(tiempos['debounce'], 0)
         self.assertEqual(tiempos['editor'], [1, 1])
+
+    def test_tiempos_internos_conservan_predeterminados_y_admiten_cadencia_cero(self):
+        tiempos = temporizacion_config({'editor_caracter': [0, 0], 'navegador_pausa_scroll': [2, 4]})
+        self.assertEqual(tiempos['editor_caracter'], [0, 0])
+        self.assertEqual(tiempos['navegador_pausa_scroll'], [2, 4])
+        self.assertEqual(tiempos['editor_escritura'], [4, 115])
+        self.assertEqual(tiempos['editor_mouse'], [2, 16])
+        self.assertEqual(tiempos['navegador_visita'], [10, 20])

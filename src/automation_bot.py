@@ -80,6 +80,8 @@ class AutomationBot:
         guardar_configuracion(config)
         self.temporizacion = temporizacion_config(config.temporizacion)
         self.editor_interactor.rango_duracion = self.temporizacion['editor']
+        self.editor_interactor.temporizacion = temporizacion_config(self.temporizacion)
+        self.web_interactor.temporizacion = temporizacion_config(self.temporizacion)
         self._modo = config.modo if editor_activo and web_activa else ('editor' if editor_activo else 'web')
         self._turno_actual = "web" if self._modo == "web" else "editor"
         self.editor_interactor.atajo_ir_linea = None  # Cada inicio vuelve a consultar; las pausas no.

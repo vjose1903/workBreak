@@ -259,11 +259,16 @@ class WebInteractor(BaseAutomation):
         contexto.update(abierta=True, navegada=anterior['pagina'] == pagina, pagina=pagina, url=actual)
         return True
 
+    def _pausa_accion(self, clave, tiempo_final):
+        segundos = self._duracion_configurada(clave)
+        if segundos > 0:
+            self._esperar(min(segundos, max(0, tiempo_final - time.monotonic())))
+
     def interactuar_con_pagina(self, pagina, tiempo_turno=float("inf")):
         """Interactúa con una página abierta en el navegador"""
         if not any(self.acciones.values()):
             return
-        duracion = self._visita_restante if self._visita_restante is not None else random.uniform(10, 20)
+        duracion = self._visita_restante if self._visita_restante is not None else self._duracion_configurada('navegador_visita')
         self._visita_restante = None
         if duracion <= 0:
             return
@@ -285,9 +290,10 @@ class WebInteractor(BaseAutomation):
             self._ultimo_click = None
             center_x, center_y = self._configurar_area_mouse(self.rectangulo_aplicacion(config['mac']))
             if self.acciones['mover_mouse']:
-                self._move_to(center_x, center_y, duration=0.3)
+                self._move_to(center_x, center_y, duration=self._duracion_configurada('navegador_centrado'))
             if self.acciones['click'] and self._mouse_en_area_segura():
                 self._click_registrado()
+                self._pausa_accion('navegador_pausa_click', tiempo_final)
 
             while self._queda_tiempo(tiempo_final):
                 self._confirmar_destino_web()
@@ -296,13 +302,15 @@ class WebInteractor(BaseAutomation):
                 # Cada acción respeta su configuración independiente.
                 if self.acciones['mover_mouse']:
                     target_x, target_y = self._destino_lejano(center_x, center_y)
-                    self._move_to(target_x, target_y, duration=random.uniform(0.6, 1.2))
+                    self._move_to(target_x, target_y, duration=self._duracion_configurada('navegador_movimiento'))
                 if self._mouse_en_area_segura():
                     if self.acciones['click'] and (not self.acciones['mover_mouse'] or self._lejos_del_ultimo_click()):
                         self._click_registrado()
-                    if self.acciones['scroll']:
+                        self._pausa_accion('navegador_pausa_click', tiempo_final)
+                    if self.acciones['scroll'] and time.monotonic() < tiempo_final:
                         self._scroll(random.randint(-300, 300))
-                self._esperar(random.uniform(1, 3))
+                        self._pausa_accion('navegador_pausa_scroll', tiempo_final)
+                self._esperar(min(self._duracion_configurada('navegador_ciclo'), max(0, tiempo_final - time.monotonic())))
 
             self._visita_restante = None
         except PausaPorActividad:

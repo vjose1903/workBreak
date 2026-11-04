@@ -1,4 +1,5 @@
 import logging
+from timing_config import temporizacion_config
 import json
 import os
 import platform
@@ -43,6 +44,7 @@ class BaseAutomation:
     def __init__(self):
         pyautogui.FAILSAFE = True
         pyautogui.PAUSE = 0.05
+        self.temporizacion = temporizacion_config()
 
         # Determinamos el sistema operativo de manera más eficiente
         self.is_windows = os.name == "nt"
@@ -65,6 +67,9 @@ class BaseAutomation:
         self.portapapeles_bot = {"ultimo": None}
         self._limpiando = False
         self._area_mouse = None
+
+    def _duracion_configurada(self, clave):
+        return random.uniform(*self.temporizacion[clave])
 
     def _antes_accion(self):
         pyautogui.failSafeCheck()
