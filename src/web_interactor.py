@@ -1,4 +1,5 @@
 import logging
+import json
 import math
 import pyautogui
 import subprocess
@@ -171,10 +172,24 @@ class WebInteractor(BaseAutomation):
         marcador = "workbreak:sin-url"
         if not self.copiar_al_portapapeles(marcador):
             raise RuntimeError("No se pudo comprobar la pestaña del navegador")
-        self._hotkey(self.cmd_key, 'l')
-        actual = self.copiar_seleccion()
+        limite = time.monotonic() + 2
+        intentos = 0
+        while True:
+            self._hotkey(self.cmd_key, 'l')
+            self._esperar(0.05)
+            actual = self.copiar_seleccion()
+            intentos += 1
+            if actual and actual != marcador:
+                break
+            if time.monotonic() >= limite:
+                break
+            # Chrome puede tardar en enfocar la barra y entregar la copia durante la carga.
+            self._esperar(0.1)
         self._press('esc')
         if not actual or actual == marcador:
+            logging.error('No se pudo confirmar la URL: %s', json.dumps({
+                'navegador': self.browser, 'intentos': intentos,
+                'vacio': not bool(actual), 'marcador_sin_reemplazar': actual == marcador}))
             raise RuntimeError("No se pudo leer la dirección de la pestaña")
         return actual
 

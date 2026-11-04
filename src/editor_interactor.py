@@ -388,12 +388,12 @@ class EditorInteractor(BaseAutomation):
         """
         if not self.is_mac:
             return True
-        from AppKit import NSWorkspace
+        from mac_accessibility import aplicacion, pid_aplicacion_al_frente
+        pid = aplicacion(info['bundle']).processIdentifier()
         fin = time.monotonic() + limite
         reactivar = time.monotonic() + 1
         while True:
-            frente = NSWorkspace.sharedWorkspace().frontmostApplication()
-            if frente is not None and frente.bundleIdentifier() == info['bundle']:
+            if pid_aplicacion_al_frente() == pid:
                 return True
             if time.monotonic() >= fin:
                 return False
@@ -985,7 +985,17 @@ class EditorInteractor(BaseAutomation):
     def conservar_portapapeles_usuario(self):
         try:
             contenido = self.leer_portapapeles()
-            if self.portapapeles_es_del_bot(contenido):
+            try:
+                propio = self.portapapeles_es_del_bot(contenido)
+            except PortapapelesNoDisponible:
+                if not self.portapapeles_bot.get('copia_pendiente'):
+                    raise
+                # Una copia interrumpida no permite atribuir el contenido: conservar el
+                # actual completo como nueva referencia, sin escribir sobre él ni adivinar.
+                propio = False
+                logging.warning('Recuperación de copia interrumpida: %s', json.dumps({
+                    'accion': 'conservar_portapapeles_actual', 'atribucion_al_bot': False}))
+            if propio:
                 self.portapapeles_bot['ultimo'] = contenido
             else:
                 self._guardar_portapapeles_usuario()

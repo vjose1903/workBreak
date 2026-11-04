@@ -41,6 +41,7 @@ def atributo(elemento, nombre, opcional=False):
 def aplicacion(nombre):
     from AppKit import NSWorkspace
     from pathlib import Path
+    _actualizar_workspace()
     for app in NSWorkspace.sharedWorkspace().runningApplications():
         url = app.bundleURL()
         if (app.bundleIdentifier() == nombre or app.localizedName() == nombre
@@ -58,13 +59,24 @@ def elemento_aplicacion(nombre):
     return api['AXUIElementCreateApplication'](aplicacion(nombre).processIdentifier())
 
 
-def documento_editor(bundle):
+def _actualizar_workspace():
+    # AppKit retiene sus propiedades hasta procesar el run loop, también en el worker sin UI.
+    from Foundation import NSRunLoop, NSDate
+    NSRunLoop.currentRunLoop().runUntilDate_(NSDate.dateWithTimeIntervalSinceNow_(0.001))
+
+
+def pid_aplicacion_al_frente():
     from AppKit import NSWorkspace
-    workspace = NSWorkspace.sharedWorkspace()
+    _actualizar_workspace()
+    frente = NSWorkspace.sharedWorkspace().frontmostApplication()
+    return frente.processIdentifier() if frente is not None else None
+
+
+def documento_editor(bundle):
+    pid = aplicacion(bundle).processIdentifier()
 
     def comprobar_foco():
-        frente = workspace.frontmostApplication()
-        if not frente or frente.bundleIdentifier() != bundle:
+        if pid_aplicacion_al_frente() != pid:
             raise ValueError('El editor no está al frente')
 
     comprobar_foco()

@@ -208,7 +208,7 @@ El editor tiene un único botón «Duración…» y un modal compacto de dos col
 
 - **Primeros 5 segundos:** solo el mouse tiene margen de gracia para evitar la pausa por el clic de inicio. El teclado pausa desde el primer momento, también al pulsar Command sin otra tecla.
 - **Durante la pausa:** el menú muestra el estado y la cuenta atrás; el registro informa los reinicios y la reanudación. Sus propios eventos no reinician la espera.
-- **Al reanudar:** recupera el trabajo pendiente. Si el archivo temporal cambió externamente, puede detener la edición para proteger esos cambios.
+- **Al reanudar:** recupera el trabajo pendiente. Si una copia de comprobación quedó interrumpida y no se puede atribuir, conserva el portapapeles actual completo como nueva referencia, sin reemplazarlo por un valor anterior supuesto. Si el archivo temporal cambió externamente, puede detener la edición para proteger esos cambios.
 - **Detener bot:** finaliza la sesión también durante una pausa. **Salir de WorkBreak** solicita la detención y espera la limpieza.
 - **Emergencia:** llevar el mouse a una esquina de la pantalla principal activa la parada de PyAutoGUI. Si ejecutas desde Terminal, también puedes usar **Ctrl+C**.
 

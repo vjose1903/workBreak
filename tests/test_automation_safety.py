@@ -34,6 +34,61 @@ with patch.dict(sys.modules, {'pyautogui': teclado}):
 
 
 class AutomationSafetyTest(unittest.TestCase):
+    def test_activacion_mac_acepta_foco_real_aunque_la_solicitud_devuelva_false(self):
+        objetivo = SimpleNamespace(processIdentifier=lambda: 42)
+        workspace = SimpleNamespace(sharedWorkspace=lambda: SimpleNamespace(frontmostApplication=lambda: objetivo))
+        with patch.dict(sys.modules, {'AppKit': SimpleNamespace(NSWorkspace=workspace)}), \
+                patch('mac_accessibility._actualizar_workspace'), \
+                patch('mac_accessibility.aplicacion', return_value=objetivo), \
+                patch('mac_accessibility.activar_aplicacion', return_value=False):
+            self.assertTrue(self.web._activar_aplicacion_mac('Google Chrome'))
+
+    def test_activacion_mac_espera_el_foco_real_antes_de_continuar(self):
+        objetivo = SimpleNamespace(processIdentifier=lambda: 42)
+        otro = SimpleNamespace(processIdentifier=lambda: 7)
+        workspace = MagicMock()
+        workspace.sharedWorkspace.return_value.frontmostApplication.side_effect = [otro, objetivo]
+        with patch.dict(sys.modules, {'AppKit': SimpleNamespace(NSWorkspace=workspace)}), \
+                patch('mac_accessibility._actualizar_workspace'), \
+                patch('mac_accessibility.aplicacion', return_value=objetivo), \
+                patch('mac_accessibility.activar_aplicacion', return_value=True), \
+                patch.object(self.web, '_esperar') as esperar:
+            self.assertTrue(self.web._activar_aplicacion_mac('Google Chrome'))
+        esperar.assert_called_once_with(0.05)
+
+    def test_activacion_mac_rechaza_una_solicitud_que_no_cambia_el_foco(self):
+        objetivo = SimpleNamespace(processIdentifier=lambda: 42)
+        workspace = SimpleNamespace(sharedWorkspace=lambda: SimpleNamespace(
+            frontmostApplication=lambda: SimpleNamespace(processIdentifier=lambda: 7)))
+        with patch.dict(sys.modules, {'AppKit': SimpleNamespace(NSWorkspace=workspace)}), \
+                patch('mac_accessibility._actualizar_workspace'), \
+                patch('mac_accessibility.aplicacion', return_value=objetivo), \
+                patch('mac_accessibility.activar_aplicacion', return_value=True), \
+                patch('base_automation.time.monotonic', side_effect=[0, 3.1]):
+            self.assertFalse(self.web._activar_aplicacion_mac('Google Chrome'))
+
+    def test_lectura_url_reintenta_si_chrome_aun_no_entrega_la_copia(self):
+        with patch.object(self.web, 'copiar_al_portapapeles', return_value=True), \
+                patch.object(self.web, 'copiar_seleccion', side_effect=['workbreak:sin-url', '', 'https://example.com']) as copiar:
+            self.assertEqual(WebInteractor._leer_url_actual(self.web), 'https://example.com')
+        self.assertEqual(copiar.call_count, 3)
+        self.assertEqual(teclado.press.call_args_list, [unittest.mock.call('esc')])
+
+    def test_lectura_url_fallida_tiene_plazo_y_no_navega(self):
+        with patch.object(self.web, 'copiar_al_portapapeles', return_value=True), \
+                patch.object(self.web, 'copiar_seleccion', return_value='workbreak:sin-url'), \
+                patch('web_interactor.time.monotonic', side_effect=[0, 2.1]):
+            with self.assertRaisesRegex(RuntimeError, 'dirección de la pestaña'):
+                WebInteractor._leer_url_actual(self.web)
+        self.assertNotIn(unittest.mock.call('enter'), teclado.press.call_args_list)
+
+    def test_actividad_durante_reintento_de_url_pausa_sin_escape_ni_navegacion(self):
+        with patch.object(self.web, 'copiar_al_portapapeles', return_value=True), \
+                patch.object(self.web, 'copiar_seleccion', side_effect=PausaPorActividad()):
+            with self.assertRaises(PausaPorActividad):
+                WebInteractor._leer_url_actual(self.web)
+        teclado.press.assert_not_called()
+
     def test_espera_larga_termina_en_el_limite_global(self):
         self.editor.monitor_actividad = MagicMock()
         with patch.object(self.editor, 'tiempo_restante', return_value=2):
@@ -1263,22 +1318,33 @@ class AutomationSafetyTest(unittest.TestCase):
         self.editor._portapapeles_original = 'usuario'
         self.editor.portapapeles_bot.update(ultimo='marcador', copia_pendiente=True)
         with patch.object(self.editor, 'leer_portapapeles', return_value='fragmento'):
-            with self.assertRaisesRegex(EditorNoDisponible, 'sin confirmar'):
-                self.editor.conservar_portapapeles_usuario()
-        self.assertEqual(self.editor._portapapeles_original, 'usuario')
+            self.editor.conservar_portapapeles_usuario()
+        self.assertEqual(self.editor._portapapeles_original, 'fragmento')
         self.assertEqual(self.editor.portapapeles_bot['ultimo'], 'marcador')
+        self.assertNotIn('copia_pendiente', self.editor.portapapeles_bot)
 
     def test_copia_ambigua_del_usuario_no_se_sobrescribe_al_salir(self):
         self.editor._portapapeles_original = 'antiguo'
         self.editor.portapapeles_bot.update(ultimo='marcador', copia_pendiente=True)
         with patch.object(self.editor, 'leer_portapapeles', return_value='nuevo'), \
                 patch.object(self.editor, 'copiar_al_portapapeles') as copiar:
-            with self.assertRaises(EditorNoDisponible):
-                self.editor.conservar_portapapeles_usuario()
-            with self.assertRaises(PortapapelesNoDisponible):
-                self.editor.restaurar_portapapeles()
+            self.editor.conservar_portapapeles_usuario()
+            self.editor.restaurar_portapapeles()
         copiar.assert_not_called()
-        self.assertEqual(self.editor._portapapeles_original, 'antiguo')
+        self.assertEqual(self.editor._portapapeles_original, 'nuevo')
+
+    def test_copia_interrumpida_conserva_formatos_actuales_antes_de_continuar(self):
+        estado = {'version': 2, 'items': [[('public.png', b'imagen usuario')]]}
+        self.editor._portapapeles_original = 'anterior'
+        self.editor.portapapeles_bot.update(ultimo='bot', version=1, copia_pendiente=True)
+        with patch('clipboard_state.version', return_value=2), \
+                patch('clipboard_state.capturar', return_value=estado), \
+                patch.object(self.editor, 'leer_portapapeles', return_value=''), \
+                patch.object(self.editor, 'copiar_al_portapapeles') as copiar:
+            self.editor.conservar_portapapeles_usuario()
+        copiar.assert_not_called()
+        self.assertEqual(self.editor._formatos_portapapeles, estado)
+        self.assertNotIn('copia_pendiente', self.editor.portapapeles_bot)
 
     def test_lectura_fallida_no_guarda_un_portapapeles_vacio(self):
         self.editor._portapapeles_original = 'original'
@@ -1390,10 +1456,12 @@ class AutomationSafetyTest(unittest.TestCase):
         self.editor.is_mac = True
         info = self.editor.EDITOR_INFO['vsCode']
         appkit = MagicMock()
-        terminal = SimpleNamespace(bundleIdentifier=lambda: 'com.apple.Terminal')
-        editor = SimpleNamespace(bundleIdentifier=lambda: info['bundle'])
+        terminal = SimpleNamespace(bundleIdentifier=lambda: 'com.apple.Terminal', processIdentifier=lambda: 7)
+        editor = SimpleNamespace(bundleIdentifier=lambda: info['bundle'], processIdentifier=lambda: 42)
         frentes = appkit.NSWorkspace.sharedWorkspace.return_value.frontmostApplication
         with patch.dict(sys.modules, {'AppKit': appkit}), \
+                patch('mac_accessibility._actualizar_workspace'), \
+                patch('mac_accessibility.aplicacion', return_value=editor), \
                 patch.object(self.editor, '_activar_si_necesario', return_value=True):
             frentes.side_effect = [terminal, terminal, editor]
             self.assertTrue(EditorInteractor._esperar_editor_al_frente(self.editor, info))

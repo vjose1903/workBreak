@@ -2,12 +2,25 @@ import sys
 from pathlib import Path
 import unittest
 from unittest.mock import MagicMock, patch
+from types import SimpleNamespace
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / 'src'))
 from mac_permissions import permisos_faltantes
 
 
 class PermisosMacTest(unittest.TestCase):
+    def test_foco_se_refresca_en_el_worker_sin_bucle_de_appkit(self):
+        from mac_accessibility import pid_aplicacion_al_frente
+        estado = {'pid': 7}
+        loop = MagicMock()
+        loop.currentRunLoop.return_value.runUntilDate_.side_effect = lambda *_: estado.update(pid=42)
+        foundation = SimpleNamespace(NSRunLoop=loop, NSDate=MagicMock())
+        appkit = SimpleNamespace(NSWorkspace=SimpleNamespace(sharedWorkspace=lambda: SimpleNamespace(
+            frontmostApplication=lambda: SimpleNamespace(processIdentifier=lambda: estado['pid']))))
+        with patch.dict(sys.modules, {'AppKit': appkit, 'Foundation': foundation}):
+            self.assertEqual(pid_aplicacion_al_frente(), 42)
+        loop.currentRunLoop.return_value.runUntilDate_.assert_called_once()
+
     def test_detecta_cada_permiso_y_reconsulta_tras_autorizar(self):
         quartz = MagicMock()
         quartz.kCGEventKeyDown = 10

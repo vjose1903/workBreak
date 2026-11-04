@@ -357,10 +357,20 @@ class BaseAutomation:
 
     def _activar_aplicacion_mac(self, nombre_mac: str) -> bool:
         """Activa la aplicación desde el proceso autorizado de WorkBreak."""
-        from mac_accessibility import activar_aplicacion
+        from mac_accessibility import activar_aplicacion, aplicacion, pid_aplicacion_al_frente
         self._antes_accion()
         try:
-            return activar_aplicacion(nombre_mac)
+            pid = aplicacion(nombre_mac).processIdentifier()
+            # El resultado de la solicitud no sustituye la comprobación del foco real.
+            activar_aplicacion(nombre_mac)
+            limite = time.monotonic() + 3
+            while True:
+                self._antes_accion()
+                if pid_aplicacion_al_frente() == pid:
+                    return True
+                if time.monotonic() >= limite:
+                    return False
+                self._esperar(0.05)
         except ValueError as error:
             logging.error("Error activando aplicación: %s", json.dumps({
                 "aplicacion": nombre_mac, "error": str(error)}, ensure_ascii=False))
