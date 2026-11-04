@@ -750,12 +750,26 @@ class EditorInteractor(BaseAutomation):
         self._hotkey(*self.atajo_ir_linea)
         self._esperar(0.2)
         if self.is_mac:
-            # Seleccionar/copiar no modifica el archivo si el panel no se abrió.
-            self._hotkey("command", "a")
-            campo = self._leer_seleccion_mac()
-            if campo is None or re.fullmatch(r":\d*(?::\d*)?", campo) is None:
-                self._press("esc")
-                raise EditorNoDisponible("No se confirmó el panel Ir a línea; no se enviaron coordenadas")
+            # El quick input puede tomar el foco después de abrirse, especialmente al cargar.
+            limite = time.monotonic() + 3.0
+            intentos = 0
+            while True:
+                self._hotkey("command", "a")
+                campo = self._leer_seleccion_mac()
+                self._antes_accion()
+                intentos += 1
+                if campo is not None and re.fullmatch(r":\d*(?::\d*)?", campo) is not None:
+                    break
+                if time.monotonic() >= limite:
+                    logging.error("No se confirmó Ir a línea: %s", json.dumps({
+                        "editor": self.editor_actual, "atajo": self.atajo_ir_linea,
+                        "intentos": intentos, "sin_seleccion": campo is None,
+                        "longitud": len(campo) if campo is not None else None,
+                        "prefijo_linea": bool(campo and campo.startswith(':')),
+                    }, ensure_ascii=False))
+                    self._press("esc")
+                    raise EditorNoDisponible("No se confirmó el panel Ir a línea; no se enviaron coordenadas")
+                self._esperar(0.1)
             destino = f":{numero}:1"
         else:
             destino = f"{numero}:1"

@@ -1405,9 +1405,33 @@ class AutomationSafetyTest(unittest.TestCase):
         teclado.write.assert_called_once_with(':25:1', interval=0.03)
         confirmar.assert_called_once_with(25)
 
+    def test_panel_tardio_no_recibe_coordenadas_hasta_confirmarse(self):
+        self.editor.is_mac = True
+        self.editor.atajo_ir_linea = ('ctrl', 'g')
+        def leer():
+            teclado.write.assert_not_called()
+            return next(lecturas)
+        lecturas = iter([None, 'codigo fuera del panel', ':23'])
+        with patch.object(self.editor, '_leer_seleccion_mac', side_effect=leer), \
+                patch.object(self.editor, '_confirmar_linea_mac') as confirmar:
+            self.editor._ir_a_linea(25)
+        teclado.hotkey.assert_any_call('ctrl', 'g')
+        teclado.write.assert_called_once_with(':25:1', interval=0.03)
+        confirmar.assert_called_once_with(25)
+
+    def test_actividad_durante_lectura_del_panel_pausa_sin_escribir(self):
+        self.editor.is_mac = True
+        with patch.object(self.editor, '_leer_seleccion_mac', side_effect=PausaPorActividad), \
+                patch.object(self.editor, '_confirmar_linea_mac') as confirmar:
+            with self.assertRaises(PausaPorActividad):
+                self.editor._ir_a_linea(25)
+        teclado.write.assert_not_called()
+        confirmar.assert_not_called()
+
     def test_error_navegando_no_autoriza_reescritura(self):
         self.editor.is_mac = True
         with patch.object(self.editor, '_leer_seleccion_mac', return_value='codigo fuera del panel'), \
+                patch('editor_interactor.time.monotonic', side_effect=[0, 4]), \
                 patch.object(self.editor, '_confirmar_linea_mac') as confirmar:
             with self.assertRaises(EditorNoDisponible):
                 self.editor._ir_a_linea(25)
