@@ -1,6 +1,7 @@
 import os
 import subprocess
 import sys
+import tempfile
 import unittest
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
@@ -20,11 +21,13 @@ teclado.FailSafeException = FailSafeException
 teclado.size.return_value = (1920, 1080)
 with patch.dict(sys.modules, {'pyautogui': teclado}):
     from base_automation import TiempoAgotado, PortapapelesNoDisponible
+    import editor_interactor
     from editor_interactor import EditorInteractor, EditorNoDisponible, LineaDesincronizada
     from statistics_tracker import StatisticsTracker
     from web_interactor import WebInteractor
     from automation_bot import AutomationBot
     from menu import Configuracion
+    from code_source import RealProjectSource
 
 
 class AutomationSafetyTest(unittest.TestCase):
@@ -259,6 +262,9 @@ class AutomationSafetyTest(unittest.TestCase):
         direccion = patch.object(self.web, '_leer_url_actual', return_value='https://example.com')
         direccion.start()
         self.addCleanup(direccion.stop)
+        frente = patch.object(self.editor, '_esperar_editor_al_frente', return_value=True)
+        frente.start()
+        self.addCleanup(frente.stop)
         # Nunca consultar las ventanas reales del editor.
         ventanas_editor = patch.object(self.editor, '_editor_tiene_ventana', return_value=False)
         ventanas_editor.start()
@@ -578,7 +584,6 @@ class AutomationSafetyTest(unittest.TestCase):
                 self.assertEqual(mover.call_count, mouse)
 
     def test_rotacion_espera_a_terminar_la_linea_interrumpida(self):
-        from code_source import RealProjectSource
         self.editor.fuente_codigo = unittest.mock.Mock(spec=RealProjectSource)
         self.editor._fases_con_archivo = 3
         self.editor.bloque_actual = ['    return total;']
@@ -676,7 +681,6 @@ class AutomationSafetyTest(unittest.TestCase):
                     self.assertEqual(self.editor.desplazamiento, 0)
 
     def test_cambia_fuente_real_tras_tres_fases(self):
-        from code_source import RealProjectSource
         self.editor.fuente_codigo = unittest.mock.Mock(spec=RealProjectSource)
         self.editor._fases_con_archivo = 0
 
@@ -693,6 +697,21 @@ class AutomationSafetyTest(unittest.TestCase):
             self.editor.fase_escritura(float('inf'))
             cargar.assert_called_once()
             self.assertEqual(self.editor._fases_con_archivo, 1)
+
+    def test_cambia_fuente_real_por_tiempo_aunque_haya_pocas_fases(self):
+        self.editor.fuente_codigo = unittest.mock.Mock(spec=RealProjectSource)
+        self.editor._fases_con_archivo = 1
+        self.editor._duracion_archivo = 120
+        with patch.object(self.editor, '_queda_tiempo_editor', return_value=True), \
+                patch.object(self.editor, '_duracion_fase_escritura', return_value=0), \
+                patch.object(self.editor, '_asegurar_destino'), \
+                patch.object(self.editor, 'inyectar_codigo') as cargar:
+            self.editor._archivo_desde = editor_interactor.time.monotonic() - 60
+            self.editor.fase_escritura(float('inf'))
+            cargar.assert_not_called()
+            self.editor._archivo_desde = editor_interactor.time.monotonic() - 121
+            self.editor.fase_escritura(float('inf'))
+            cargar.assert_called_once()
 
     def test_inyeccion_cancelada_si_falla_activacion(self):
         self.editor.editor_actual = 'vsCode'
@@ -739,7 +758,7 @@ class AutomationSafetyTest(unittest.TestCase):
         self.editor.is_windows = False
         self.editor.is_mac = True
         self.editor.cmd_key = 'command'
-        resultado = SimpleNamespace(stdout='workbreak_unico.tsx — Visual Studio Code\n')
+        resultado = SimpleNamespace(stdout='file:///tmp/workbreak_unico.tsx\n')
         with patch.object(self.editor, '_activar_si_necesario', return_value=True), \
                 patch('editor_interactor.subprocess.run', return_value=resultado) as ejecutar:
             self.editor._asegurar_destino()
@@ -749,10 +768,76 @@ class AutomationSafetyTest(unittest.TestCase):
             'tell application "System Events"',
             'tell (first application process whose bundle identifier is appBundleId)',
             'if frontmost is false then error "Editor sin foco"',
-            'get name of front window',
+            'set documento to ""',
+            'try',
+            'set documento to value of attribute "AXDocument" of front window',
+            'end try',
+            'if documento is missing value then set documento to ""',
+            'return documento',
             'end tell',
             'end tell',
         ])
+
+    def test_archivo_del_usuario_con_el_mismo_nombre_no_se_acepta(self):
+        self.editor.editor_actual = 'vsCode'
+        self.editor.ruta_archivo = '/tmp/bot/useCanvasFonts.ts'
+        self.editor.is_windows = False
+        self.editor.is_mac = True
+        for documento in ('file:///Users/yo/proyecto/src/useCanvasFonts.ts', '', 'missing value'):
+            with self.subTest(documento=documento), \
+                    patch.object(self.editor, '_activar_si_necesario', return_value=True), \
+                    patch('editor_interactor.subprocess.run',
+                          return_value=SimpleNamespace(stdout=documento, returncode=0)):
+                with self.assertRaisesRegex(EditorNoDisponible, 'no está activo'):
+                    self.editor._asegurar_destino()
+
+    def test_ruta_del_documento_admite_var_y_espacios_codificados(self):
+        carpeta = tempfile.mkdtemp()
+        ruta = os.path.join(carpeta, 'mi archivo.ts')
+        open(ruta, 'w').close()
+        url = 'file://' + os.path.realpath(ruta).replace(' ', '%20')
+        self.assertTrue(editor_interactor._misma_ruta(url, ruta))
+        self.assertFalse(editor_interactor._misma_ruta(url, os.path.join(carpeta, 'otro.ts')))
+
+    def test_pestana_lleva_el_nombre_del_codigo_sin_marca_del_bot(self):
+        ruta = self.editor._crear_archivo_temporal('useCanvasFonts.ts')
+        self.assertEqual(os.path.basename(ruta), 'useCanvasFonts.ts')
+        self.assertNotIn('workbreak', ruta.lower())
+        # Un segundo archivo con el mismo nombre no pisa el primero.
+        otra = self.editor._crear_archivo_temporal('useCanvasFonts.ts')
+        self.assertNotEqual(ruta, otra)
+        self.assertEqual(os.path.basename(otra), 'useCanvasFonts.ts')
+
+    def test_cambio_de_fuente_cierra_la_pestana_anterior_y_abre_otra(self):
+        self.editor.EDITOR_ABIERTO = True
+        self.editor.editor_actual = 'vsCode'
+        self.editor.ruta_archivo = self.editor._crear_archivo_temporal('Antes.tsx')
+        self.editor.fuente_codigo = SimpleNamespace(obtener_codigo=lambda: 'const a = 1;',
+                                                    nombre_archivo='Despues.ts')
+        with patch.object(self.editor, 'guardar_portapapeles_original'), \
+                patch.object(self.editor, '_asegurar_destino'), \
+                patch.object(self.editor, 'copiar_al_portapapeles', return_value=True), \
+                patch.object(self.editor, '_comando_abrir_editor', side_effect=lambda _e, ruta: ['code', ruta]), \
+                patch.object(self.editor, 'ejecutar_comando', return_value=True) as abrir:
+            anterior = self.editor.ruta_archivo
+            self.editor.inyectar_codigo()
+        self.assertEqual(os.path.basename(self.editor.ruta_archivo), 'Despues.ts')
+        self.assertFalse(os.path.exists(anterior))
+        abrir.assert_called_once_with(['code', self.editor.ruta_archivo])
+        llamadas = teclado.hotkey.call_args_list
+        self.assertLess(llamadas.index(unittest.mock.call(self.editor.cmd_key, 's')),
+                        llamadas.index(unittest.mock.call(self.editor.cmd_key, 'w')))
+        self.assertEqual(self.editor.lineas_actuales, ['const a = 1;'])
+
+    def test_codigo_generado_nombra_la_pestana_con_su_componente(self):
+        from code_generator import CodeGenerator
+        generador = CodeGenerator()
+        codigo = generador.obtener_codigo()
+        self.assertTrue(generador.nombre_archivo.endswith(('.tsx', '.ts')))
+        self.assertNotIn('workbreak', generador.nombre_archivo.lower())
+        componente = generador.nombre_archivo.rsplit('.', 1)[0]
+        self.assertTrue(f'export const {componente}' in codigo or generador.nombre_archivo in
+                        [r.rsplit('/', 1)[-1] for r in generador.rutas_archivos])
 
     def test_error_mac_conserva_diagnostico_original(self):
         self.editor.editor_actual = 'vsCode'
@@ -1142,6 +1227,30 @@ class AutomationSafetyTest(unittest.TestCase):
             existente = self.editor._comando_abrir_editor('vsCode', '/tmp/workbreak_prueba/archivo.tsx')
             self.assertEqual(existente[1:], ['--reuse-window', '/tmp/workbreak_prueba/archivo.tsx'])
 
+    def test_atajos_esperan_a_que_el_editor_este_al_frente(self):
+        self.editor.is_mac = True
+        info = self.editor.EDITOR_INFO['vsCode']
+        appkit = MagicMock()
+        terminal = SimpleNamespace(bundleIdentifier=lambda: 'com.apple.Terminal')
+        editor = SimpleNamespace(bundleIdentifier=lambda: info['bundle'])
+        frentes = appkit.NSWorkspace.sharedWorkspace.return_value.frontmostApplication
+        with patch.dict(sys.modules, {'AppKit': appkit}), \
+                patch.object(self.editor, '_activar_si_necesario', return_value=True):
+            frentes.side_effect = [terminal, terminal, editor]
+            self.assertTrue(EditorInteractor._esperar_editor_al_frente(self.editor, info))
+            frentes.side_effect = None
+            frentes.return_value = terminal
+            self.assertFalse(EditorInteractor._esperar_editor_al_frente(self.editor, info, limite=0.3))
+
+    def test_sin_editor_al_frente_no_se_envian_atajos(self):
+        self.editor.editor_actual = 'vsCode'
+        self.editor.ruta_archivo = '/tmp/workbreak_unico.tsx'
+        with patch.object(self.editor, '_activar_si_necesario', return_value=True), \
+                patch.object(self.editor, '_esperar_editor_al_frente', return_value=False):
+            with self.assertRaisesRegex(EditorNoDisponible, 'primer plano'):
+                self.editor._asegurar_destino()
+        teclado.hotkey.assert_not_called()
+
     def test_detecta_ventana_abierta_del_editor(self):
         self.editor.is_mac = True
         appkit, cuarzo = MagicMock(), MagicMock()
@@ -1213,6 +1322,18 @@ class AutomationSafetyTest(unittest.TestCase):
         teclado.hotkey.assert_any_call('option', 'g')
         teclado.write.assert_called_once_with(':14:1', interval=0.03)
         confirmar.assert_called_once_with(14)
+
+    def test_copia_lenta_del_editor_se_espera_antes_de_fallar(self):
+        marcador = 'workbreak:sin-seleccion'
+        with patch.object(self.editor, 'copiar_al_portapapeles', return_value=True), \
+                patch.object(self.editor, 'copiar_seleccion', return_value=marcador), \
+                patch.object(self.editor, 'leer_portapapeles', side_effect=[marcador, 'linea copiada']):
+            self.assertEqual(self.editor._leer_seleccion_mac(), 'linea copiada')
+        with patch.object(self.editor, 'copiar_al_portapapeles', return_value=True), \
+                patch.object(self.editor, 'copiar_seleccion', return_value=marcador), \
+                patch.object(self.editor, 'leer_portapapeles', return_value=marcador), \
+                patch('editor_interactor.time.monotonic', side_effect=[0, 0, 0.5, 1.1]):
+            self.assertIsNone(self.editor._leer_seleccion_mac())
 
     def test_ventana_reutilizada_pega_cada_caracter_en_vez_de_teclearlo(self):
         self.editor.reutilizar_ventana = True

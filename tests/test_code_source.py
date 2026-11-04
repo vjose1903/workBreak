@@ -55,6 +55,13 @@ class RealProjectSourceTest(unittest.TestCase):
         self.assertTrue(codigo.strip())
         self.assertIn("export", codigo)
 
+    def test_nombre_archivo_es_el_del_ultimo_codigo_entregado(self):
+        fuente = RealProjectSource(self.raiz)
+        self.assertIsNone(fuente.nombre_archivo)
+        codigo = fuente.obtener_codigo()
+        self.assertIn(fuente.nombre_archivo, ('App.tsx', 'util.ts'))
+        self.assertEqual(codigo.splitlines()[0].startswith('import'), fuente.nombre_archivo == 'App.tsx')
+
     def test_no_repite_archivos_consecutivos(self):
         fuente = RealProjectSource(self.raiz)
         anterior = fuente.obtener_codigo()

@@ -110,5 +110,10 @@ class RealProjectSource:
         logging.error("No se pudo leer ningún archivo de la fuente real")
         raise ValueError('No quedan archivos fuente válidos y legibles')
 
+    @property
+    def nombre_archivo(self):
+        """Nombre del último archivo entregado, para nombrar la pestaña del editor."""
+        return self._ultimo_archivo.name if self._ultimo_archivo is not None else None
+
     def __str__(self) -> str:
         return f"Directorio real: {self.directorio}"

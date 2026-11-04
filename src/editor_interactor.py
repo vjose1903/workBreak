@@ -22,6 +22,14 @@ class EditorNoDisponible(Exception):
     """Excepción para cuando no se puede abrir ningún editor instalado"""
 
 
+def _misma_ruta(url: str, ruta: str) -> bool:
+    """Compara una URL file:// con una ruta local (macOS resuelve /var como /private/var)."""
+    from urllib.parse import unquote, urlparse
+    partes = urlparse(url)
+    return (partes.scheme == 'file' and bool(partes.path)
+            and os.path.realpath(unquote(partes.path)) == os.path.realpath(ruta))
+
+
 class LineaDesincronizada(Exception):
     """En una ventana del usuario, el editor cambió el código del bot (formateo, extensiones)."""
 
@@ -52,10 +60,14 @@ class EditorInteractor(BaseAutomation):
         self.directorio_trabajo = None
         self.informar_estado = None
         self._fases_con_archivo = 0
+        # Con una carpeta como fuente, el archivo también rota por tiempo (no solo por fases).
+        self._archivo_desde = None
+        self._duracion_archivo = None
         self.EDITOR_INFO = EDITORES
         # True si al iniciar ya había una ventana del editor: el archivo se abre en ella.
         self.reutilizar_ventana = False
         self._resincronizaciones = 0
+        self._codigo_pendiente = None
 
     def validar_editor(self, value: str) -> str:
         """Valida que el editor esté en la lista de editores válidos"""
@@ -110,9 +122,26 @@ class EditorInteractor(BaseAutomation):
             logging.error(f"Error lanzando el editor ({cmd}): {e}")
             return False
 
-    def _crear_archivo_temporal(self) -> str:
-        """Crea una pestaña de trabajo vacía con nombre único por sesión."""
-        carpeta = Path(tempfile.mkdtemp(prefix="workbreak_"))
+    def _crear_archivo_temporal(self, nombre: str = 'index.tsx') -> str:
+        """Crea un archivo vacío con el nombre indicado en la carpeta temporal de la sesión.
+
+        El nombre puede repetirse con archivos del usuario: la identidad de la pestaña se
+        confirma por su ruta completa (ver `_asegurar_destino`).
+        """
+        if self.directorio_trabajo is None:
+            self._crear_directorio_trabajo()
+        carpeta = Path(self.directorio_trabajo)
+        ruta, numero = carpeta / nombre, 2
+        while ruta.exists():
+            ruta = carpeta / str(numero) / nombre
+            numero += 1
+        ruta.parent.mkdir(exist_ok=True)
+        ruta.touch()
+        return str(ruta)
+
+    def _crear_directorio_trabajo(self) -> None:
+        # Sin prefijo propio: la ruta se ve en la barra de navegación del editor.
+        carpeta = Path(tempfile.mkdtemp(prefix=""))
         self.directorio_trabajo = str(carpeta)
         ajustes_editor = {
             "editor.autoClosingBrackets": "never",
@@ -131,13 +160,44 @@ class EditorInteractor(BaseAutomation):
             "editor.linkedEditing": False,
         }
         # Las preferencias del usuario por lenguaje prevalecen sobre ajustes genéricos.
-        ajustes = {**ajustes_editor, "[typescriptreact]": ajustes_editor,
+        lenguajes = ("typescriptreact", "typescript", "javascriptreact", "javascript")
+        ajustes = {**ajustes_editor, **{f"[{lenguaje}]": ajustes_editor for lenguaje in lenguajes},
                    "files.autoSave": "off", "files.trimTrailingWhitespace": False}
         (carpeta / '.vscode').mkdir()
         (carpeta / '.vscode/settings.json').write_text(json.dumps(ajustes, indent=2), encoding='utf-8')
-        ruta = carpeta / (carpeta.name + '.tsx')
-        ruta.touch()
-        return str(ruta)
+
+    def _obtener_codigo(self) -> str:
+        try:
+            return self.fuente_codigo.obtener_codigo()
+        except (OSError, ValueError) as error:
+            raise EditorNoDisponible('No se pudo leer la fuente; se conserva el código actual') from error
+
+    def _nombre_archivo_codigo(self) -> str:
+        """Nombre del archivo de origen (fuente real) o del componente generado."""
+        nombre = getattr(self.fuente_codigo, 'nombre_archivo', None)
+        if isinstance(nombre, str) and os.path.basename(nombre):
+            return os.path.basename(nombre)
+        return 'index.tsx'
+
+    def _cambiar_archivo(self, nombre: str) -> None:
+        """Cierra la pestaña actual del bot y abre otra con el nombre del nuevo código."""
+        anterior = self.ruta_archivo
+        self._asegurar_destino()
+        # Guardar antes de cerrar evita el diálogo de cambios sin guardar.
+        self._hotkey(self.cmd_key, 's')
+        self._esperar(0.5)
+        self._asegurar_destino()
+        self._hotkey(self.cmd_key, 'w')
+        self._esperar(0.5)
+        self.ruta_archivo = self._crear_archivo_temporal(nombre)
+        cmd = self._comando_abrir_editor(self.editor_actual, self.ruta_archivo)
+        if not cmd or not self.ejecutar_comando(cmd):
+            raise EditorNoDisponible("No se pudo abrir el archivo del nuevo código")
+        self._esperar(1)
+        try:
+            os.unlink(anterior)
+        except OSError:
+            pass
 
     def abrir_editor(self, editor: str) -> None:
         """Abre el editor seleccionado con el archivo temporal; falla si no está disponible."""
@@ -145,8 +205,9 @@ class EditorInteractor(BaseAutomation):
             return
 
         try:
-            # El nombre único permite distinguir esta pestaña de las del usuario.
-            self.ruta_archivo = self._crear_archivo_temporal()
+            # El primer código se elige antes de abrir para que la pestaña lleve su nombre.
+            self._codigo_pendiente = self._obtener_codigo()
+            self.ruta_archivo = self._crear_archivo_temporal(self._nombre_archivo_codigo())
             self.reutilizar_ventana = self._editor_tiene_ventana(editor)
             if self.reutilizar_ventana:
                 logging.info("Hay una ventana del editor abierta; el archivo del bot se abre en ella")
@@ -243,6 +304,8 @@ class EditorInteractor(BaseAutomation):
         info = self.EDITOR_INFO[self.editor_actual]
         if not self._activar_si_necesario(info["proceso"], info["mac"]):
             raise EditorNoDisponible("No se pudo enfocar el editor; se cancela la entrada")
+        if not self._esperar_editor_al_frente(info):
+            raise EditorNoDisponible("El editor no pasó a primer plano; se cancela la entrada")
         # La comprobación del título se hace después de enfocar el grupo de código.
         self._hotkey(self.cmd_key, "1")
         self._esperar(0.15)
@@ -251,16 +314,25 @@ class EditorInteractor(BaseAutomation):
                 import win32gui
                 titulo = win32gui.GetWindowText(win32gui.GetForegroundWindow())
             elif self.is_mac:
+                # La ruta del documento (AXDocument) distingue el archivo del bot de uno del
+                # usuario con el mismo nombre.
                 resultado = self._ejecutar_proceso(
                     ["osascript", "-e",
                      f'set appBundleId to id of application "{info["mac"]}"\n'
                      'tell application "System Events"\n'
                      'tell (first application process whose bundle identifier is appBundleId)\n'
                      'if frontmost is false then error "Editor sin foco"\n'
-                     'get name of front window\nend tell\nend tell'],
+                     'set documento to ""\n'
+                     'try\n'
+                     'set documento to value of attribute "AXDocument" of front window\n'
+                     'end try\n'
+                     'if documento is missing value then set documento to ""\n'
+                     'return documento\nend tell\nend tell'],
                     capture_output=True, text=True, check=True, timeout=5,
                 )
-                titulo = resultado.stdout.strip()
+                if not _misma_ruta(resultado.stdout.strip(), self.ruta_archivo):
+                    raise EditorNoDisponible("El archivo del bot no está activo; se cancela la entrada")
+                return
             else:
                 raise EditorNoDisponible("Sistema operativo no soportado")
             if os.path.basename(self.ruta_archivo) not in titulo:
@@ -281,6 +353,28 @@ class EditorInteractor(BaseAutomation):
             logging.error("Fallo verificando el editor: %s", json.dumps(detalle, ensure_ascii=False))
             motivo = stderr or str(e)
             raise EditorNoDisponible(f"No se pudo verificar el archivo temporal: {motivo.strip()}") from e
+
+    def _esperar_editor_al_frente(self, info: dict, limite: float = 3.0) -> bool:
+        """Espera a que el editor esté de verdad en primer plano antes de enviarle teclas.
+
+        Si su ventana está en otro escritorio o en pantalla completa, macOS tarda en
+        cambiar de espacio: un atajo enviado antes llegaría a otra aplicación.
+        """
+        if not self.is_mac:
+            return True
+        from AppKit import NSWorkspace
+        fin = time.monotonic() + limite
+        reactivar = time.monotonic() + 1
+        while True:
+            frente = NSWorkspace.sharedWorkspace().frontmostApplication()
+            if frente is not None and frente.bundleIdentifier() == info['bundle']:
+                return True
+            if time.monotonic() >= fin:
+                return False
+            if time.monotonic() >= reactivar:
+                self._activar_si_necesario(info["proceso"], info["mac"])
+                reactivar = time.monotonic() + 1
+            self._esperar(0.1)
 
     def manejar_error(self, mensaje: str) -> None:
         """Registra el error y lo propaga para que el bot lo maneje (nunca sys.exit)"""
@@ -342,8 +436,8 @@ class EditorInteractor(BaseAutomation):
         linea_pendiente = (self.bloque_actual is not None
                            and self.indice_linea < len(self.bloque_actual)
                            and self.desplazamiento > 0)
-        if (isinstance(self.fuente_codigo, RealProjectSource)
-                and self._fases_con_archivo >= 3 and not linea_pendiente):
+        if (isinstance(self.fuente_codigo, RealProjectSource) and not linea_pendiente
+                and (self._fases_con_archivo >= 3 or self._archivo_vencido())):
             self.inyectar_codigo()
         self._fases_con_archivo += 1
         if self.informar_estado:
@@ -359,6 +453,10 @@ class EditorInteractor(BaseAutomation):
                 break
             self._editar_bloque_real(fin)
             self._esperar(random.uniform(0.4, 1.8))
+
+    def _archivo_vencido(self) -> bool:
+        return (self._archivo_desde is not None
+                and time.monotonic() - self._archivo_desde >= self._duracion_archivo)
 
     def fase_mouse(self, tiempo_final: float) -> None:
         """Ejecuta las acciones de mouse habilitadas dentro de la ventana confirmada."""
@@ -684,7 +782,15 @@ class EditorInteractor(BaseAutomation):
         if not self.copiar_al_portapapeles(marcador):
             raise EditorNoDisponible("No se pudo preparar la comprobación del cursor")
         contenido = self.copiar_seleccion()
-        return None if contenido == marcador else contenido
+        # Un editor ocupado (p. ej. tras pegar muchos caracteres) puede copiar tarde.
+        fin = time.monotonic() + 1.0
+        while contenido == marcador and time.monotonic() < fin:
+            self._esperar(0.1)
+            contenido = self.leer_portapapeles()
+        if contenido == marcador:
+            return None
+        self.portapapeles_bot['ultimo'] = contenido
+        return contenido
 
     def _confirmar_linea_mac(self, numero: int) -> None:
         if not self.lineas_actuales or not 1 <= numero <= len(self.lineas_actuales):
@@ -755,10 +861,13 @@ class EditorInteractor(BaseAutomation):
     def inyectar_codigo(self) -> None:
         """Reemplaza el contenido del editor con un bloque grande de código realista"""
         self.guardar_portapapeles_original()
-        try:
-            codigo = self.fuente_codigo.obtener_codigo()
-        except (OSError, ValueError) as error:
-            raise EditorNoDisponible('No se pudo leer la fuente; se conserva el código actual') from error
+        if self._codigo_pendiente is not None:
+            codigo, self._codigo_pendiente = self._codigo_pendiente, None
+        else:
+            codigo = self._obtener_codigo()
+            nombre = self._nombre_archivo_codigo()
+            if self.EDITOR_ABIERTO and self.ruta_archivo and nombre != os.path.basename(self.ruta_archivo):
+                self._cambiar_archivo(nombre)
 
         if not self.copiar_al_portapapeles(codigo):
             logging.error("No se pudo copiar el código; se omite el pegado")
@@ -771,6 +880,8 @@ class EditorInteractor(BaseAutomation):
         self._hotkey(self.cmd_key, 'v')
         self.lineas_actuales = codigo.splitlines()
         self._fases_con_archivo = 0
+        self._archivo_desde = time.monotonic()
+        self._duracion_archivo = random.uniform(120, 300)
         self._lineas_observadas.clear()
         self.bloque_actual = None
         self.inicio_bloque = 0

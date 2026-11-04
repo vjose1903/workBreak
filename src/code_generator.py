@@ -7,6 +7,7 @@ class CodeGenerator:
     capturas de pantalla del monitor de actividad muestren trabajo real en el editor."""
 
     def __init__(self):
+        self.nombre_archivo = None
         self.nombres_componentes = [
             "Dashboard", "UserProfile", "OrderList", "InvoiceView",
             "SettingsPanel", "ActivityFeed", "ProductCard", "SearchBar",
@@ -91,6 +92,7 @@ class CodeGenerator:
                 or not 0 < min_lineas <= max_lineas):
             raise ValueError("El rango de líneas debe contener enteros positivos en orden")
         self._usados = set()
+        self.nombre_archivo = None
         self._export_default_usado = False
         self._constantes_usadas = False
         bloques = [self._generar_modulo()]
@@ -100,6 +102,8 @@ class CodeGenerator:
             bloques.append(bloque)
             total += len(bloque)
         lineas = self._truncar_por_bloques(bloques, min_lineas, max_lineas)
+        if self.nombre_archivo is None:
+            self.nombre_archivo = random.choice(self.rutas_archivos).rsplit('/', 1)[-1]
         return "\n".join(lineas).rstrip()
 
     def obtener_codigo(self) -> str:
@@ -191,6 +195,9 @@ class CodeGenerator:
 
     def _generar_componente(self, tipo: str, nombre_interface: str, nombre_funcion: str) -> list:
         nombre = self._nombre_unico(self.nombres_componentes)
+        if self.nombre_archivo is None:
+            # La pestaña se llama como el componente principal del código.
+            self.nombre_archivo = f"{nombre}.tsx"
         lineas = []
         lineas.append(f"export const {nombre}: FC<{nombre_interface}Props> = ({{ items, onSelect }}) => {{")
         lineas.append("  const [isLoading, setIsLoading] = useState(false);")
