@@ -1,4 +1,5 @@
 import logging
+import json
 import os
 import platform
 import re
@@ -8,6 +9,7 @@ import time
 from typing import Optional
 
 import pyautogui
+from process_locale import locale_utf8_disponible
 
 logging.basicConfig(
     level=logging.INFO,
@@ -81,6 +83,12 @@ class BaseAutomation:
     def _ejecutar_proceso(self, cmd, timeout=10, **opciones):
         """Cancela únicamente el proceso auxiliar del bot si interviene el usuario."""
         self._antes_accion()
+        if self.is_mac:
+            # Finder no proporciona LANG: pbpaste/pbcopy y osascript deben usar el
+            # mismo UTF-8 que Python, también en la aplicación compilada.
+            opciones['env'] = {**opciones.get('env', os.environ), 'LC_ALL': locale_utf8_disponible()}
+            if opciones.get('text') or opciones.get('universal_newlines'):
+                opciones.setdefault('encoding', 'utf-8')
         if self.monitor_actividad is None:
             return subprocess.run(cmd, timeout=timeout, **opciones)
         entrada = opciones.pop('input', None)
@@ -446,12 +454,15 @@ class BaseAutomation:
             else:
                 resultado = self._ejecutar_proceso(["pbpaste"], capture_output=True, text=True, timeout=5)
             if resultado.returncode != 0:
-                raise PortapapelesNoDisponible("El sistema rechazó la lectura del portapapeles")
+                raise PortapapelesNoDisponible("El sistema rechazó la lectura del portapapeles: " + json.dumps({
+                    "codigo": resultado.returncode, "stderr": resultado.stderr or ""}, ensure_ascii=False))
             return resultado.stdout
         except pyautogui.FailSafeException:
             raise
         except Exception as e:
-            raise PortapapelesNoDisponible("No se pudo leer el portapapeles; se conserva el estado anterior") from e
+            logging.error("Fallo leyendo el portapapeles: %s", json.dumps({
+                "tipo": type(e).__name__, "error": str(e)}, ensure_ascii=False))
+            raise PortapapelesNoDisponible("No se pudo leer el portapapeles; se conserva el estado anterior: " + str(e)) from e
 
     def copiar_seleccion(self):
         self._hotkey(self.cmd_key, 'c')

@@ -856,7 +856,7 @@ class EditorInteractor(BaseAutomation):
                 self._portapapeles_original = self.leer_portapapeles()
                 logging.info("Portapapeles del usuario guardado")
             except PortapapelesNoDisponible as e:
-                raise EditorNoDisponible("No se pudo guardar el portapapeles original; se cancela la inyección") from e
+                raise EditorNoDisponible("No se pudo guardar el portapapeles original; se cancela la inyección: " + str(e)) from e
 
     def inyectar_codigo(self) -> None:
         """Reemplaza el contenido del editor con un bloque grande de código realista"""

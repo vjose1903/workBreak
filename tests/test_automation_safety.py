@@ -20,6 +20,7 @@ teclado = MagicMock()
 teclado.FailSafeException = FailSafeException
 teclado.size.return_value = (1920, 1080)
 with patch.dict(sys.modules, {'pyautogui': teclado}):
+    import base_automation
     from base_automation import TiempoAgotado, PortapapelesNoDisponible
     import editor_interactor
     from editor_interactor import EditorInteractor, EditorNoDisponible, LineaDesincronizada
@@ -221,6 +222,9 @@ class AutomationSafetyTest(unittest.TestCase):
         for nombre in ('hotkey', 'press', 'write', 'click', 'scroll', 'moveTo'):
             getattr(teclado, nombre).reset_mock(side_effect=True)
         teclado.size.return_value = (1920, 1080)
+        locale_hijo = patch.object(base_automation, 'locale_utf8_disponible', return_value='es_ES.UTF-8')
+        locale_hijo.start()
+        self.addCleanup(locale_hijo.stop)
         self.editor = EditorInteractor(StatisticsTracker())
         self.editor.atajo_ir_linea = ('option', 'g')
         self.web = WebInteractor(StatisticsTracker())
@@ -1521,6 +1525,23 @@ class AutomationSafetyTest(unittest.TestCase):
         with self.assertRaises(TiempoAgotado):
             self.editor._write('texto')
         teclado.write.assert_not_called()
+
+    def test_procesos_macos_usan_utf8_aunque_finder_no_defina_idioma(self):
+        self.editor.is_mac = True
+        entorno = {'PATH': '/usr/bin:/bin'}
+        for asincrono in (False, True):
+            self.editor.monitor_actividad = MagicMock() if asincrono else None
+            proceso = MagicMock(returncode=0)
+            proceso.communicate.return_value = ('inyección', '')
+            with patch.dict('os.environ', entorno, clear=True), \
+                    patch('base_automation.subprocess.run', return_value=proceso) as directo, \
+                    patch('base_automation.subprocess.Popen', return_value=proceso) as separado:
+                self.editor._ejecutar_proceso(['pbpaste'], capture_output=True, text=True)
+            opciones = (separado if asincrono else directo).call_args.kwargs
+            self.assertEqual(opciones['env']['LC_ALL'], 'es_ES.UTF-8')
+            self.assertEqual(opciones['env']['PATH'], '/usr/bin:/bin')
+            self.assertEqual(opciones['encoding'], 'utf-8')
+            self.assertEqual(entorno, {'PATH': '/usr/bin:/bin'})
 
     def test_proceso_con_entrada_no_la_reenvia_tras_timeout(self):
         self.editor.monitor_actividad = MagicMock()
