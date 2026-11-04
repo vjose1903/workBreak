@@ -276,14 +276,20 @@ class MonitorActividadTest(unittest.TestCase):
         self.assertFalse(monitor._es_movimiento_bot(4000, 500))
 
     def test_pausa_informa_su_causa(self):
-        monitor = MonitorActividad(debounce=0)
+        monitor = MonitorActividad(debounce=10)
         monitor._detectar_desde = 0
-        monitor.registrar(causa='evento 5 del proceso 0')
-        with self.assertLogs(level='INFO') as registros:
-            monitor.debounce = 0.01
-            monitor.esperar_inactividad()
-        self.assertIn('causa: evento 5 del proceso 0', '\n'.join(registros.output))
+        reloj = [0.0]
 
+        def esperar(segundos):
+            reloj[0] += segundos
+
+        with patch('user_activity.time.monotonic', side_effect=lambda: reloj[0]), \
+                patch.object(monitor._condicion, 'wait', side_effect=esperar):
+            monitor.registrar(causa='evento 5 del proceso 0')
+            with self.assertLogs(level='INFO') as registros:
+                self.assertTrue(monitor.esperar_inactividad())
+        self.assertIn('causa: evento 5 del proceso 0', '\n'.join(registros.output))
+        self.assertEqual(reloj[0], 10)
 
     def test_modificador_ya_mantenido_al_iniciar_se_registra_antes_del_bot(self):
         monitor = MonitorActividad(margen_inicial=0)
