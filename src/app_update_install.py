@@ -164,12 +164,16 @@ done
 if ! /usr/bin/osascript -e {shlex.quote(applescript)}; then
   /usr/bin/osascript -e {shlex.quote(alerta)}
 fi
-/usr/bin/open /Applications/WorkBreak.app
+if [ -d /Applications/WB.app ]; then
+  /usr/bin/open /Applications/WB.app
+else
+  /usr/bin/open /Applications/WorkBreak.app
+fi
 '''
 
 
 def instalar_y_reiniciar(preparada):
-    destino = Path('/Applications/WorkBreak.app/Contents/MacOS/WorkBreak')
+    destino = Path('/Applications/WB.app/Contents/MacOS/WorkBreak')
     if not getattr(sys, 'frozen', False) or Path(sys.executable).resolve() != destino.resolve():
         raise ValueError('La instalación automática requiere abrir WorkBreak desde Aplicaciones, no desde Python o build/.')
     carpeta = Path(preparada['carpeta'])

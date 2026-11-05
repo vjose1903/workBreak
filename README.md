@@ -36,9 +36,11 @@ WorkBreak puede trabajar en un editor, navegar por webs o alternar ambos. Elige 
 Puedes identificar tu procesador en ** → Acerca de este Mac**. Los enlaces se actualizan con cada Release; también puedes consultar [todas las versiones](https://github.com/vjose1903/workBreak/releases).
 
 1. Abre el DMG y ejecuta el instalador `.pkg` que contiene.
-2. Abre **WorkBreak** desde Aplicaciones y busca su **W** en la barra de menús.
+2. Abre **WB** desde Aplicaciones y busca su **W** en la barra de menús.
 3. Configura el editor, navegador, acciones y tiempos.
 4. Pulsa **Iniciar bot**. Para terminar, selecciona **Detener bot**.
+
+La aplicación se instala como **WB.app**; conserva la configuración y los registros de WorkBreak. Al actualizar desde una versión llamada WorkBreak, puede ser necesario abrir **WB** manualmente al terminar la instalación.
 
 El bot nunca comienza automáticamente al abrir la aplicación. **Windows está en desarrollo:** todavía no tiene instalador ni interfaz equivalente publicados.
 

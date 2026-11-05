@@ -41,7 +41,7 @@ def guardar_preferencias(config):
 
 def inicio_disponible():
     return (getattr(sys, 'frozen', False)
-            and Path(sys.executable).resolve() == Path('/Applications/WorkBreak.app/Contents/MacOS/WorkBreak').resolve())
+            and Path(sys.executable).resolve() == Path('/Applications/WB.app/Contents/MacOS/WorkBreak').resolve())
 
 
 def estado_inicio():

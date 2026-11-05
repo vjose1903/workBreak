@@ -148,5 +148,5 @@ Sin `--no-migrate`, la compilación local puede copiar una vez el historial a Ap
 - Fuentes: archivos regulares de hasta 2 MiB y de 20 a 400 líneas; el escaneo se puede cancelar.
 - Duración total: de un segundo a `9999:59:59`, o indefinida. Los tiempos internos se definen en [timing_config.py](../src/timing_config.py).
 - Consulta de actualizaciones: proceso cancelable con límite total de 30 segundos, incluido DNS. Descarga: 15 minutos.
-- Instalación: requiere la app en `/Applications/WorkBreak.app`; comprueba HTTPS, tamaño, SHA-256 y los metadatos del paquete antes de entregarlo al instalador nativo.
+- Instalación: requiere la app en `/Applications/WB.app`; comprueba HTTPS, tamaño, SHA-256 y los metadatos del paquete antes de entregarlo al instalador nativo.
 - El proceso antirreposo queda ligado al PID del bot. Una interfaz y una sesión de automatización por usuario evitan ejecuciones simultáneas.

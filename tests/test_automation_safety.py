@@ -1737,7 +1737,7 @@ class AutomationSafetyTest(unittest.TestCase):
         self.assertEqual(teclado.moveTo.call_count, 3)
         teclado.moveTo.assert_called_with(-800, -350, _pause=False)
 
-    def test_turnos_web_conservan_paginas_pendientes(self):
+    def test_turnos_web_nuevos_empiezan_por_la_primera_pagina(self):
         self.web.set_paginas(['https://uno.example', 'https://dos.example', 'https://tres.example'])
         visitadas = []
         agotado = [False]
@@ -1751,8 +1751,21 @@ class AutomationSafetyTest(unittest.TestCase):
             for _ in range(3):
                 agotado[0] = False
                 self.web.interactuar_web(30)
-        self.assertEqual(visitadas, self.web.paginas)
-        self.assertEqual(self.web._indice_pagina, 0)
+        self.assertEqual(visitadas, [self.web.paginas[0]] * 3)
+        self.assertEqual(self.web._indice_pagina, 1)
+
+    def test_turnos_web_reutilizan_pestana_sin_saltar_las_primeras_webs(self):
+        uno, dos = 'https://uno.example', 'https://dos.example'
+        self.web.set_paginas([uno, dos])
+        with patch.object(self.web, 'activar_navegador', return_value=True), \
+                patch.object(self.web, 'copiar_al_portapapeles', return_value=True) as copiar, \
+                patch.object(self.web, '_url_pestana', side_effect=[uno, uno, dos, dos, uno, uno, dos]), \
+                patch.object(self.web, 'interactuar_con_pagina') as interactuar:
+            for _ in range(2):
+                self.web.interactuar_web(30)
+        self.assertEqual([c.args[0] for c in copiar.call_args_list], [uno, dos, uno, dos])
+        self.assertEqual([c.args[0] for c in interactuar.call_args_list], [uno, dos, uno, dos])
+        self.assertEqual(teclado.hotkey.call_args_list.count(unittest.mock.call(self.web.cmd_key, 't')), 1)
 
     def test_visita_agotada_no_contamina_la_siguiente(self):
         self.web._visita_restante = 0

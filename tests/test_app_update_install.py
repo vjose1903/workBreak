@@ -108,6 +108,7 @@ class InstalacionTest(unittest.TestCase):
         subprocess.run(['/bin/sh', '-n'], input=script, text=True, check=True)
         self.assertIn('kill -0 1234', script)
         self.assertIn('with administrator privileges', script)
+        self.assertIn('/usr/bin/open /Applications/WB.app', script)
         self.assertIn('/usr/bin/open /Applications/WorkBreak.app', script)
         self.assertNotIn('sudo', script)
 

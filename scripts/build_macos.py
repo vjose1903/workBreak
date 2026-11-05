@@ -54,6 +54,19 @@ def generar_icono(destino):
     return icono
 
 
+def script_preinstall():
+    return ('#!/bin/sh\nif /usr/bin/pgrep -x WorkBreak >/dev/null; then\n'
+            '  echo "Cierra WB desde su menú antes de instalar o actualizar." >&2\n'
+            '  exit 1\nfi\n'
+            'anterior="${3%/}/Applications/WorkBreak.app"\n'
+            'destino="${3%/}/Applications/WB.app"\n'
+            'if [ -d "$anterior" ] && [ ! -L "$anterior" ] && [ ! -e "$destino" ] && [ ! -L "$destino" ]; then\n'
+            '  identificador=$(/usr/libexec/PlistBuddy -c "Print :CFBundleIdentifier" "$anterior/Contents/Info.plist" 2>/dev/null) || exit 1\n'
+            f'  if [ "$identificador" = "{APP_ID}" ]; then\n'
+            '    /bin/mv "$anterior" "$destino" || exit 1\n'
+            '  fi\nfi\nexit 0\n')
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument('--no-migrate', action='store_true', help='No copiar el historial local a Application Support')
@@ -104,9 +117,13 @@ def main():
              '--distpath', trabajo / 'app', '--workpath', trabajo / 'pyinstaller',
              '--specpath', trabajo, ROOT / 'src/main.py')
     app = trabajo / 'app/WorkBreak.app'
+    destino_app = app.with_name('WB.app')
+    app.rename(destino_app)
+    app = destino_app
     plist = app / 'Contents/Info.plist'
     info = plistlib.loads(plist.read_bytes())
-    info.update(CFBundleShortVersionString=VERSION, CFBundleVersion=VERSION,
+    info.update(CFBundleName='WB', CFBundleDisplayName='WB',
+                CFBundleShortVersionString=VERSION, CFBundleVersion=VERSION,
                 LSUIElement=True, LSMinimumSystemVersion='15.0', NSRequiresAquaSystemAppearance=False,
                 NSAppleEventsUsageDescription='WorkBreak necesita activar y verificar el editor y el navegador para realizar las interacciones configuradas.')
     plist.write_bytes(plistlib.dumps(info))
@@ -137,19 +154,17 @@ def main():
         raise RuntimeError('Falló la comprobación del ejecutable distribuido')
     escenario = trabajo / 'payload'
     escenario.mkdir()
-    ejecutar('ditto', app, escenario / 'WorkBreak.app')
+    ejecutar('ditto', app, escenario / 'WB.app')
     componentes = trabajo / 'components.plist'
     componentes.write_bytes(plistlib.dumps([{
-        'RootRelativeBundlePath': 'WorkBreak.app', 'BundleIsRelocatable': False,
+        'RootRelativeBundlePath': 'WB.app', 'BundleIsRelocatable': False,
         'BundleIsVersionChecked': True, 'BundleHasStrictIdentifier': True,
         'BundleOverwriteAction': 'upgrade',
     }]))
     scripts = trabajo / 'installer-scripts'
     scripts.mkdir()
     preinstall = scripts / 'preinstall'
-    preinstall.write_text('#!/bin/sh\nif /usr/bin/pgrep -x WorkBreak >/dev/null; then\n'
-                          '  echo "Cierra WorkBreak desde su menú antes de instalar o actualizar." >&2\n'
-                          '  exit 1\nfi\nexit 0\n')
+    preinstall.write_text(script_preinstall())
     preinstall.chmod(0o755)
     paquete = salida / (nombre + '.pkg')
     ejecutar('pkgbuild', '--root', escenario, '--component-plist', componentes, '--scripts', scripts,
@@ -162,10 +177,10 @@ def main():
     contenido.mkdir()
     shutil.copy2(paquete, contenido / paquete.name)
     (contenido / 'LEEME.txt').write_text(
-        f'WorkBreak {VERSION}\n\nAbre el archivo .pkg para instalar o actualizar WorkBreak en Aplicaciones.\n'
-        'Cierra WorkBreak antes de actualizar. No borres la aplicación anterior.\n'
+        f'WorkBreak {VERSION}\n\nAbre el archivo .pkg para instalar o actualizar WB en Aplicaciones.\n'
+        'Cierra WB antes de actualizar. No borres la aplicación anterior.\n'
         'La configuración se conserva en ~/Library/Application Support/WorkBreak/.\n'
-        'Al abrir WorkBreak por primera vez, permite Accesibilidad, Monitorización de entrada y Automatización.\n'
+        'Al abrir WB por primera vez, permite Accesibilidad, Monitorización de entrada y Automatización.\n'
         'Después de una actualización sin firma Developer ID, macOS puede pedir renovar estos permisos.\n', encoding='utf-8')
     dmg = salida / (nombre + '.dmg')
     if dmg.exists():

@@ -7,11 +7,18 @@ import unittest
 from unittest.mock import MagicMock, patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / 'src'))
-from app_preferences import cargar_preferencias, guardar_preferencias, estado_inicio, establecer_inicio
+from app_preferences import cargar_preferencias, guardar_preferencias, estado_inicio, establecer_inicio, inicio_disponible
 from menu import Configuracion, _config_a_dict
 
 
 class PreferenciasTest(unittest.TestCase):
+    def test_inicio_disponible_desde_wb_instalada(self):
+        with patch('app_preferences.sys.frozen', True, create=True):
+            for ejecutable, esperado in [('/Applications/WB.app/Contents/MacOS/WorkBreak', True),
+                                         ('/tmp/WB.app/Contents/MacOS/WorkBreak', False)]:
+                with self.subTest(ejecutable=ejecutable), patch('app_preferences.sys.executable', ejecutable):
+                    self.assertEqual(inicio_disponible(), esperado)
+
     def test_guardar_y_leer_sin_iniciar_sesion_del_bot(self):
         with tempfile.TemporaryDirectory() as carpeta, patch('app_preferences.directorio_datos', return_value=Path(carpeta)):
             config = _config_a_dict(Configuracion())

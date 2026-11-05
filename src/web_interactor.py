@@ -132,6 +132,11 @@ class WebInteractor(BaseAutomation):
             logging.warning("No hay navegador configurado")
             return
 
+        if self._turno_restante is None:
+            # Volver del editor inicia otro recorrido; una pausa conserva el actual.
+            self._indice_pagina = 0
+            self._contexto = None
+            self._visita_restante = None
         duracion = self._turno_restante if self._turno_restante is not None else duracion_maxima
         tiempo_final = time.monotonic() + duracion if duracion is not None else float("inf")
         try:
