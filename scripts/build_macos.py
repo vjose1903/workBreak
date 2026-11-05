@@ -55,7 +55,7 @@ def generar_icono(destino):
 
 
 def script_preinstall():
-    return ('#!/bin/sh\nif /usr/bin/pgrep -x WorkBreak >/dev/null; then\n'
+    return ('#!/bin/sh\nif /usr/bin/pgrep -x "(WorkBreak|WB)" >/dev/null; then\n'
             '  echo "Cierra WB desde su menú antes de instalar o actualizar." >&2\n'
             '  exit 1\nfi\n'
             'anterior="${3%/}/Applications/WorkBreak.app"\n'
@@ -111,21 +111,18 @@ def main():
         entitlements['com.apple.security.cs.allow-unsigned-executable-memory'] = True
     permisos.write_bytes(plistlib.dumps(entitlements))
     ejecutar(sys.executable, '-m', 'PyInstaller', '--noconfirm', '--clean', '--windowed', '--onedir',
-             '--name', 'WorkBreak', '--osx-bundle-identifier', APP_ID, '--icon', icono,
+             '--name', 'WB', '--osx-bundle-identifier', APP_ID, '--icon', icono,
              '--codesign-identity', identidad, '--osx-entitlements-file', permisos,
              '--add-data', f'{ROOT / "assets"}:assets', '--add-data', f'{ROOT / "VERSION"}:.',
              '--distpath', trabajo / 'app', '--workpath', trabajo / 'pyinstaller',
              '--specpath', trabajo, ROOT / 'src/main.py')
-    app = trabajo / 'app/WorkBreak.app'
-    destino_app = app.with_name('WB.app')
-    app.rename(destino_app)
-    app = destino_app
+    app = trabajo / 'app/WB.app'
     plist = app / 'Contents/Info.plist'
     info = plistlib.loads(plist.read_bytes())
     info.update(CFBundleName='WB', CFBundleDisplayName='WB',
                 CFBundleShortVersionString=VERSION, CFBundleVersion=VERSION,
                 LSUIElement=True, LSMinimumSystemVersion='15.0', NSRequiresAquaSystemAppearance=False,
-                NSAppleEventsUsageDescription='WorkBreak necesita activar y verificar el editor y el navegador para realizar las interacciones configuradas.')
+                NSAppleEventsUsageDescription='WB necesita activar y verificar el editor y el navegador para realizar las interacciones configuradas.')
     plist.write_bytes(plistlib.dumps(info))
     firma = ['codesign', '--force', '--deep', '--sign', identidad, '--entitlements', permisos]
     if identidad != '-':
@@ -145,7 +142,7 @@ def main():
     if plistlib.loads(permisos_firmados) != entitlements:
         raise RuntimeError('Los permisos del ejecutable firmado no coinciden con los requeridos por PyObjC')
     comprobacion = trabajo / 'package-check.json'
-    subprocess.run([str(app / 'Contents/MacOS/WorkBreak'), '--comprobar-paquete', str(comprobacion)],
+    subprocess.run([str(app / 'Contents/MacOS/WB'), '--comprobar-paquete', str(comprobacion)],
                    check=True, timeout=60)
     reporte = json.loads(comprobacion.read_text())
     if not (reporte['version'] == VERSION and reporte['hijo']['version'] == VERSION
@@ -177,7 +174,7 @@ def main():
     contenido.mkdir()
     shutil.copy2(paquete, contenido / paquete.name)
     (contenido / 'LEEME.txt').write_text(
-        f'WorkBreak {VERSION}\n\nAbre el archivo .pkg para instalar o actualizar WB en Aplicaciones.\n'
+        f'WB {VERSION}\n\nAbre el archivo .pkg para instalar o actualizar WB en Aplicaciones.\n'
         'Cierra WB antes de actualizar. No borres la aplicación anterior.\n'
         'La configuración se conserva en ~/Library/Application Support/WorkBreak/.\n'
         'Al abrir WB por primera vez, permite Accesibilidad, Monitorización de entrada y Automatización.\n'
@@ -185,7 +182,7 @@ def main():
     dmg = salida / (nombre + '.dmg')
     if dmg.exists():
         dmg.unlink()
-    ejecutar('hdiutil', 'create', '-volname', f'WorkBreak {VERSION}', '-srcfolder', contenido,
+    ejecutar('hdiutil', 'create', '-volname', f'WB {VERSION}', '-srcfolder', contenido,
              '-format', 'UDZO', '-ov', dmg)
     notary = os.environ.get('WORKBREAK_NOTARY_PROFILE')
     if notary:

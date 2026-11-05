@@ -228,20 +228,32 @@ class WebInteractor(BaseAutomation):
                 self._esperar(0.4)
 
             if not contexto['navegada'] or contexto['pagina'] != pagina:
-                if not self._queda_tiempo(tiempo_final):
-                    return False
-                if not self.copiar_al_portapapeles(pagina):
-                    raise RuntimeError('No se pudo copiar la URL; se cancela la navegación')
-                self._hotkey(self.cmd_key, 'l')
-                self._hotkey(self.cmd_key, 'v')
-                if not self._queda_tiempo(tiempo_final):
-                    return False
-                contexto['navegacion_pendiente'] = True
-                self._press('return')
-                contexto.update(navegada=True, pagina=pagina, url=pagina)
-                logging.info(f"Navegando a {pagina}")
-                self._esperar(2)
-                contexto['url'] = self._url_pestana()
+                anterior = contexto['url']
+                for intento in range(2):
+                    if not self._queda_tiempo(tiempo_final):
+                        return False
+                    if not self.copiar_al_portapapeles(pagina):
+                        raise RuntimeError('No se pudo copiar la URL; se cancela la navegación')
+                    self._hotkey(self.cmd_key, 'l')
+                    self._esperar(0.1)
+                    self._hotkey(self.cmd_key, 'v')
+                    self._esperar(0.1)
+                    if not self._queda_tiempo(tiempo_final):
+                        return False
+                    contexto['navegacion_pendiente'] = True
+                    self._press('return')
+                    self._esperar(2)
+                    actual = self._url_pestana()
+                    # Admitir redirecciones, pero nunca confundir la web anterior con la solicitada.
+                    if actual == pagina or actual != anterior:
+                        contexto.update(navegada=True, pagina=pagina, url=actual)
+                        logging.info('Navegación confirmada: %s', json.dumps({
+                            'solicitada': pagina, 'actual': actual, 'intento': intento + 1}))
+                        break
+                    logging.warning('El navegador sigue en la web anterior: %s', json.dumps({
+                        'solicitada': pagina, 'actual': actual, 'intento': intento + 1}))
+                else:
+                    raise RuntimeError('No se confirmó el cambio de web; se cancela la interacción')
                 contexto['navegacion_pendiente'] = False
 
             reutilizable = True

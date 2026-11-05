@@ -184,7 +184,7 @@ class ControladorBot:
         self.proceso = self.contexto.Process(
             target=ejecutar_proceso_bot,
             args=(copy.deepcopy(registro), self.detencion, self.eventos, str(self.ruta_log), os.getpid()),
-            name='WorkBreak-bot', daemon=True,
+            name='WB-bot', daemon=True,
         )
         self.estado = {'estado': 'iniciando'}
         self.estadisticas = {}
@@ -256,7 +256,7 @@ class ControladorBot:
                 if (self.estado.get('estado') == 'error' or inesperada or self._canal_fallido) and not self._fallo_permisos:
                     self.estado['estado'] = 'error'
                     emergencia = self.estado.get('codigo') == 2
-                    titulo = 'WorkBreak: parada de emergencia' if emergencia else 'WorkBreak se detuvo por un error'
+                    titulo = 'WB: parada de emergencia' if emergencia else 'WB se detuvo por un error'
                     motivo = ('Se activó la parada de seguridad.' if emergencia else
                               self.ultimo_error.splitlines()[0][:220] if self.ultimo_error else
                               'El proceso terminó inesperadamente.' if inesperada else 'La corrida no pudo continuar.')

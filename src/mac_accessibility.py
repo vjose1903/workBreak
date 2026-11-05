@@ -54,7 +54,7 @@ def elemento_aplicacion(nombre):
     api = _api()
     if not api['AXIsProcessTrusted']():
         raise PermisoAccesibilidad(
-            'macOS no reconoce Accesibilidad para este proceso de WorkBreak; '
+            'macOS no reconoce Accesibilidad para este proceso de WB; '
             'el permiso visible puede corresponder a otra compilación de la aplicación')
     return api['AXUIElementCreateApplication'](aplicacion(nombre).processIdentifier())
 

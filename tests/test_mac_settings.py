@@ -31,6 +31,9 @@ class ConfiguracionMacTest(unittest.TestCase):
         self.menu.ventana_configuracion = self.ventana
         self.addCleanup(self.ventana.ventana.close)
 
+    def test_nombre_visible_de_la_ventana_es_wb(self):
+        self.assertEqual(self.ventana.ventana.title(), 'Configuración de WB')
+
     def test_tiempos_compartidos_y_bloqueados_durante_corrida(self):
         tiempos = {'debounce': 3, 'editor': [1, 7], 'editor_alternado': [1, 7], 'navegador': [2, 4]}
         with patch('mac_menu.DialogoSegundos') as dialogo:

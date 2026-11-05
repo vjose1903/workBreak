@@ -338,6 +338,42 @@ class AutomationSafetyTest(unittest.TestCase):
             self.web._procesar_pagina(url)
         self.assertEqual(teclado.hotkey.call_args_list.count(unittest.mock.call(self.web.cmd_key, 't')), 2)
 
+    def test_cambio_web_reintenta_si_la_pestana_sigue_en_la_anterior(self):
+        anterior, pagina = 'https://dos.example', 'https://uno.example'
+        self.web._pestana_bot = {'pagina': anterior, 'url': anterior}
+        with patch.object(self.web, 'activar_navegador', return_value=True), \
+                patch.object(self.web, 'copiar_al_portapapeles', return_value=True) as copiar, \
+                patch.object(self.web, '_url_pestana', side_effect=[anterior, anterior, pagina]), \
+                patch.object(self.web, 'interactuar_con_pagina') as interactuar:
+            self.web._procesar_pagina(pagina)
+        self.assertEqual(copiar.call_count, 2)
+        interactuar.assert_called_once_with(pagina, float('inf'))
+        self.assertEqual(self.web._pestana_bot, {'pagina': pagina, 'url': pagina})
+
+    def test_cambio_web_fallido_no_interactua_ni_atribuye_la_web_anterior_a_la_nueva(self):
+        anterior, pagina = 'https://dos.example', 'https://uno.example'
+        self.web._pestana_bot = {'pagina': anterior, 'url': anterior}
+        with patch.object(self.web, 'activar_navegador', return_value=True), \
+                patch.object(self.web, 'copiar_al_portapapeles', return_value=True) as copiar, \
+                patch.object(self.web, '_url_pestana', return_value=anterior), \
+                patch.object(self.web, 'interactuar_con_pagina') as interactuar:
+            with self.assertRaisesRegex(RuntimeError, 'No se confirmó el cambio'):
+                self.web._procesar_pagina(pagina)
+        self.assertEqual(copiar.call_count, 2)
+        interactuar.assert_not_called()
+        self.assertIsNone(self.web._pestana_bot)
+
+    def test_cambio_web_admite_redireccion_confirmada(self):
+        anterior, pagina, destino = 'https://dos.example', 'https://uno.example', 'https://uno.example/login'
+        self.web._pestana_bot = {'pagina': anterior, 'url': anterior}
+        with patch.object(self.web, 'activar_navegador', return_value=True), \
+                patch.object(self.web, 'copiar_al_portapapeles', return_value=True), \
+                patch.object(self.web, '_url_pestana', side_effect=[anterior, destino]), \
+                patch.object(self.web, 'interactuar_con_pagina') as interactuar:
+            self.web._procesar_pagina(pagina)
+        interactuar.assert_called_once()
+        self.assertEqual(self.web._pestana_bot['url'], destino)
+
     def test_mouse_editor_no_envia_eventos_si_cambia_ventana(self):
         self.editor._ventana_mouse_editor = 12
         with patch.object(self.editor, 'identidad_ventana_activa', return_value=13):

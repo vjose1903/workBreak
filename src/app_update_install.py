@@ -68,7 +68,7 @@ def preparar_descarga(nueva, informar, cancelar):
     nombre = f"WorkBreak-{nueva['version']}-macos-{arquitectura}"
     url = f"https://github.com/{GITHUB_REPO}/releases/download/v{nueva['version']}/{nombre}.dmg"
     if nueva['url'] != url or arquitectura not in ('arm64', 'x86_64'):
-        raise ValueError('La descarga no corresponde a este Mac y al repositorio de WorkBreak')
+        raise ValueError('La descarga no corresponde a este Mac y al repositorio de WB')
     if not re.fullmatch(r'[0-9a-f]{64}', nueva.get('sha256', '')):
         raise ValueError('La Release no tiene una suma SHA-256 válida')
     tamano = nueva.get('bytes')
@@ -124,7 +124,7 @@ def preparar_descarga(nueva, informar, cancelar):
         info = ElementTree.parse(expandido / 'PackageInfo').getroot()
         if (info.get('identifier') != APP_ID or info.get('version') != nueva['version']
                 or info.get('install-location') != '/Applications'):
-            raise ValueError('El instalador no corresponde a la versión de WorkBreak anunciada')
+            raise ValueError('El instalador no corresponde a la versión de WB anunciada')
         comprobar_cancelacion()
         preparada['paquete'] = str(paquete)
         return preparada
@@ -142,7 +142,7 @@ def crear_script_instalacion(preparada, pid):
     montaje = shlex.quote(str(Path(preparada['carpeta']) / 'volumen'))
     comando = shlex.join(['/usr/sbin/installer', '-pkg', preparada['paquete'], '-target', '/'])
     applescript = 'do shell script ' + json.dumps(comando, ensure_ascii=False) + ' with administrator privileges'
-    alerta = ('display alert "No se pudo actualizar WorkBreak" message '
+    alerta = ('display alert "No se pudo actualizar WB" message '
               '"La instalación se canceló o falló. Se intentará abrir la aplicación existente. '
               'Consulta ~/Library/Logs/WorkBreak/update.log."')
     return f'''#!/bin/sh
@@ -173,9 +173,9 @@ fi
 
 
 def instalar_y_reiniciar(preparada):
-    destino = Path('/Applications/WB.app/Contents/MacOS/WorkBreak')
+    destino = Path('/Applications/WB.app/Contents/MacOS/WB')
     if not getattr(sys, 'frozen', False) or Path(sys.executable).resolve() != destino.resolve():
-        raise ValueError('La instalación automática requiere abrir WorkBreak desde Aplicaciones, no desde Python o build/.')
+        raise ValueError('La instalación automática requiere abrir WB desde Aplicaciones, no desde Python o build/.')
     carpeta = Path(preparada['carpeta'])
     script = carpeta / 'instalar.sh'
     script.write_text(crear_script_instalacion(preparada, os.getpid()), encoding='utf-8')

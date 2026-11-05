@@ -31,7 +31,7 @@ class NombreAppTest(unittest.TestCase):
                     destino.mkdir()
                     (destino / 'conservar').write_text('existente')
                 # Simular que la app está cerrada; el resto del script es el del instalador.
-                script = build.script_preinstall().replace('/usr/bin/pgrep -x WorkBreak', '/usr/bin/false')
+                script = build.script_preinstall().replace('/usr/bin/pgrep -x "(WorkBreak|WB)"', '/usr/bin/false')
                 subprocess.run(['/bin/sh', '-s', '--', 'paquete', '/', str(raiz)],
                                input=script, text=True, check=True)
                 self.assertEqual(anterior.exists(), not migrar)

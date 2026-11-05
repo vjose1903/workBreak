@@ -14,8 +14,8 @@ from menu import Configuracion, _config_a_dict
 class PreferenciasTest(unittest.TestCase):
     def test_inicio_disponible_desde_wb_instalada(self):
         with patch('app_preferences.sys.frozen', True, create=True):
-            for ejecutable, esperado in [('/Applications/WB.app/Contents/MacOS/WorkBreak', True),
-                                         ('/tmp/WB.app/Contents/MacOS/WorkBreak', False)]:
+            for ejecutable, esperado in [('/Applications/WB.app/Contents/MacOS/WB', True),
+                                         ('/tmp/WB.app/Contents/MacOS/WB', False)]:
                 with self.subTest(ejecutable=ejecutable), patch('app_preferences.sys.executable', ejecutable):
                     self.assertEqual(inicio_disponible(), esperado)
 

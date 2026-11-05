@@ -41,7 +41,7 @@ def guardar_preferencias(config):
 
 def inicio_disponible():
     return (getattr(sys, 'frozen', False)
-            and Path(sys.executable).resolve() == Path('/Applications/WB.app/Contents/MacOS/WorkBreak').resolve())
+            and Path(sys.executable).resolve() == Path('/Applications/WB.app/Contents/MacOS/WB').resolve())
 
 
 def estado_inicio():
@@ -55,7 +55,7 @@ def estado_inicio():
 
 def establecer_inicio(activar):
     if not inicio_disponible():
-        raise ValueError('Abre WorkBreak desde Aplicaciones para configurar el inicio de sesión.')
+        raise ValueError('Abre WB desde Aplicaciones para configurar el inicio de sesión.')
     from ServiceManagement import SMAppService
     servicio = SMAppService.mainAppService()
     correcto, error = (servicio.registerAndReturnError_(None) if activar

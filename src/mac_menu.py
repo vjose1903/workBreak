@@ -522,7 +522,7 @@ class MenuWorkBreak(NSObject):
         aplicacion = NSApplication.sharedApplication()
         aplicacion.setAppearance_(None)  # Heredar el tema del sistema, incluidos sus cambios en vivo.
         if aplicacion.mainMenu() is None:
-            principal = NSMenu.alloc().initWithTitle_('WorkBreak')
+            principal = NSMenu.alloc().initWithTitle_('WB')
             edicion = NSMenu.alloc().initWithTitle_('Edición')
             entrada = NSMenuItem.alloc().initWithTitle_action_keyEquivalent_('Edición', None, '')
             entrada.setSubmenu_(edicion)
@@ -533,7 +533,7 @@ class MenuWorkBreak(NSObject):
                 edicion.addItem_(NSMenuItem.alloc().initWithTitle_action_keyEquivalent_(titulo, accion, tecla))
             aplicacion.setMainMenu_(principal)
         if hasattr(NSImage, 'imageWithSystemSymbolName_accessibilityDescription_'):
-            imagen = NSImage.imageWithSystemSymbolName_accessibilityDescription_('w.square.fill', 'WorkBreak')
+            imagen = NSImage.imageWithSystemSymbolName_accessibilityDescription_('w.square.fill', 'WB')
             if imagen is not None:
                 NSApplication.sharedApplication().setApplicationIconImage_(imagen)
         self.item_barra = NSStatusBar.systemStatusBar().statusItemWithLength_(NSVariableStatusItemLength)
@@ -549,8 +549,8 @@ class MenuWorkBreak(NSObject):
         else:
             boton.setTitle_('W')
             boton.setFont_(NSFont.boldSystemFontOfSize_(14))
-        boton.setToolTip_('WorkBreak — Detenido')
-        boton.setAccessibilityLabel_('WorkBreak')
+        boton.setToolTip_('WB — Detenido')
+        boton.setAccessibilityLabel_('WB')
         self.construir_menu()
         self.timer = NSTimer.timerWithTimeInterval_target_selector_userInfo_repeats_(
             0.2, self, 'actualizar:', None, True)
@@ -581,9 +581,9 @@ class MenuWorkBreak(NSObject):
 
     @objc.python_method
     def construir_menu(self):
-        menu = NSMenu.alloc().initWithTitle_('WorkBreak')
+        menu = NSMenu.alloc().initWithTitle_('WB')
         menu.setAutoenablesItems_(False)
-        self.estado_item = self.item(menu, 'WorkBreak — Detenido')
+        self.estado_item = self.item(menu, 'WB — Detenido')
         self.fase_item = self.item(menu, 'Listo para iniciar')
         menu.addItem_(NSMenuItem.separatorItem())
         self.config_items = []
@@ -667,7 +667,7 @@ class MenuWorkBreak(NSObject):
         self.item(menu, 'Estado y estadísticas…', 'estadisticas')
         self.item(menu, 'Ver registro…', 'registro')
         self.actualizar_item = self.item(menu, 'Buscar actualizaciones…', 'actualizaciones')
-        self.salir_item = self.item(menu, 'Salir de WorkBreak', 'salir')
+        self.salir_item = self.item(menu, 'Salir de WB', 'salir')
         self.item_barra.setMenu_(menu)
         self.actualizar(None)
 
@@ -704,8 +704,8 @@ class MenuWorkBreak(NSObject):
             'finalizado': 'Sesión finalizada', 'error': 'Error en la sesión',
         }
         titulo = titulos.get(estado, estado)
-        self.estado_item.setTitle_(f'WorkBreak {VERSION} — ' + titulo)
-        self.item_barra.button().setToolTip_('WorkBreak — ' + titulo)
+        self.estado_item.setTitle_(f'WB {VERSION} — ' + titulo)
+        self.item_barra.button().setToolTip_('WB — ' + titulo)
         detalle = MODOS_INTERACCION[self.config.get('modo', 'ambos')]
         if estado == 'pausado':
             datos = self.controlador.estado
@@ -730,7 +730,7 @@ class MenuWorkBreak(NSObject):
             item.setEnabled_(not activo and not self.saliendo and not self.actualizador.consultando and self.config.get('modo') != 'web')
         self.actualizar_item.setEnabled_(not activo and not self.saliendo and not self.actualizador.consultando)
         self.actualizar_item.setTitle_(self.actualizador.texto_menu if self.actualizador.consultando else 'Buscar actualizaciones…')
-        self.salir_item.setTitle_('Deteniendo antes de salir…' if self.saliendo else 'Salir de WorkBreak')
+        self.salir_item.setTitle_('Deteniendo antes de salir…' if self.saliendo else 'Salir de WB')
         self.salir_item.setEnabled_(not self.saliendo)
         if not activo and not self.saliendo:
             resultado = self.actualizador.obtener_resultado()
@@ -781,13 +781,13 @@ class MenuWorkBreak(NSObject):
     def mostrar_permisos(self, faltantes):
         NSApplication.sharedApplication().activateIgnoringOtherApps_(True)
         alerta = NSAlert.alloc().init()
-        alerta.setMessageText_('WorkBreak necesita permisos para iniciar')
+        alerta.setMessageText_('WB necesita permisos para iniciar')
         nombres = ', '.join(PERMISOS[permiso][0] for permiso in faltantes)
         alerta.setInformativeText_(
             'Falta autorizar: ' + nombres + '.\n\n'
-            'Activa WorkBreak en Privacidad y seguridad. Si no aparece, agrégalo con + '
+            'Activa WB en Privacidad y seguridad. Si no aparece, agrégalo con + '
             'desde Aplicaciones. Después vuelve a pulsar Iniciar bot. '
-            'Si macOS pide cerrar y volver a abrir WorkBreak, acepta.\n\n'
+            'Si macOS pide cerrar y volver a abrir WB, acepta.\n\n'
             'Si ya figura autorizado y sigue fallando, elimina su entrada y agrega la app instalada nuevamente.')
         for permiso in faltantes:
             alerta.addButtonWithTitle_('Abrir ' + PERMISOS[permiso][0])
@@ -802,15 +802,15 @@ class MenuWorkBreak(NSObject):
         if resultado.get('cancelada'):
             return
         if resultado.get('error'):
-            self.aviso('Actualizaciones de WorkBreak', resultado['error'])
+            self.aviso('Actualizaciones de WB', resultado['error'])
             return
         if resultado.get('descargada'):
             alerta = NSAlert.alloc().init()
             icono = NSImage.alloc().initWithContentsOfFile_(str(recurso('assets/icon.svg')))
             if icono is not None:
                 alerta.setIcon_(icono)
-            alerta.setMessageText_(f"WorkBreak {resultado['descargada']['version']} listo para instalar")
-            alerta.setInformativeText_('WorkBreak se cerrará, instalará la actualización y volverá a abrirse. '
+            alerta.setMessageText_(f"WB {resultado['descargada']['version']} listo para instalar")
+            alerta.setInformativeText_('WB se cerrará, instalará la actualización y volverá a abrirse. '
                                       'Tu configuración se conservará. macOS puede solicitar autorización de administrador.')
             alerta.addButtonWithTitle_('Instalar y reiniciar')
             alerta.addButtonWithTitle_('Ahora no')
@@ -827,14 +827,14 @@ class MenuWorkBreak(NSObject):
             return
         nueva = resultado.get('actualizacion')
         if nueva is None:
-            self.aviso('WorkBreak está actualizado', f'Versión instalada: {VERSION}.')
+            self.aviso('WB está actualizado', f'Versión instalada: {VERSION}.')
             return
         NSApplication.sharedApplication().activateIgnoringOtherApps_(True)
         alerta = NSAlert.alloc().init()
         icono = NSImage.alloc().initWithContentsOfFile_(str(recurso('assets/icon.svg')))
         if icono is not None:
             alerta.setIcon_(icono)
-        alerta.setMessageText_(f"WorkBreak {nueva['version']} disponible")
+        alerta.setMessageText_(f"WB {nueva['version']} disponible")
         alerta.setInformativeText_(f'Versión instalada: {VERSION}. La actualización se descargará aquí. '
                                   'Después podrás instalar y reiniciar sin abrir el DMG ni perder tu configuración.')
         alerta.addButtonWithTitle_('Descargar actualización')
@@ -868,9 +868,9 @@ class MenuWorkBreak(NSObject):
             elif comando == 'registro':
                 if self.controlador.ruta_log.exists():
                     if not NSWorkspace.sharedWorkspace().openFile_(str(self.controlador.ruta_log)):
-                        self.aviso('Registro de WorkBreak', 'No se pudo abrir: ' + str(self.controlador.ruta_log))
+                        self.aviso('Registro de WB', 'No se pudo abrir: ' + str(self.controlador.ruta_log))
                 else:
-                    self.aviso('Registro de WorkBreak', 'Todavía no se ha iniciado ninguna sesión.')
+                    self.aviso('Registro de WB', 'Todavía no se ha iniciado ninguna sesión.')
             elif self.controlador.activo or self.saliendo or self.actualizador.consultando:
                 return
             elif comando == 'actualizaciones':
@@ -893,7 +893,7 @@ class MenuWorkBreak(NSObject):
                 self.configurar(comando)
             self.actualizar(None)
         except Exception as error:
-            self.aviso('WorkBreak', str(error))
+            self.aviso('WB', str(error))
 
     @objc.python_method
     def configurar(self, comando, config=None):
@@ -990,7 +990,7 @@ class MenuWorkBreak(NSObject):
             mensaje += '\n\nÚltimo error:\n' + self.controlador.ultimo_error
         NSApplication.sharedApplication().activateIgnoringOtherApps_(True)
         alerta = NSAlert.alloc().init()
-        alerta.setMessageText_('Estado y estadísticas de WorkBreak')
+        alerta.setMessageText_('Estado y estadísticas de WB')
         alerta.addButtonWithTitle_('Aceptar')
         scroll = NSScrollView.alloc().initWithFrame_(((0, 0), (460, 230)))
         scroll.setHasVerticalScroller_(True)
@@ -1023,7 +1023,7 @@ def ejecutar_interfaz():
         try:
             fcntl.flock(bloqueo, fcntl.LOCK_EX | fcntl.LOCK_NB)
         except BlockingIOError:
-            print('WorkBreak ya está abierto. Busca la W en la barra de menús.')
+            print('WB ya está abierto. Busca la W en la barra de menús.')
             return 0
         app = NSApplication.sharedApplication()
         app.setActivationPolicy_(NSApplicationActivationPolicyAccessory)

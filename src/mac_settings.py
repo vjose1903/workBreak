@@ -1,4 +1,4 @@
-"""Ventana nativa que reúne las preferencias de WorkBreak."""
+"""Ventana nativa que reúne las preferencias de WB."""
 import objc
 from timing_config import TITULOS, texto_tiempo
 from AppKit import (NSApplication, NSButton, NSColor, NSFont, NSPopUpButton,
@@ -22,7 +22,7 @@ class VentanaConfiguracion(NSObject):
         self.ventana = NSWindow.alloc().initWithContentRect_styleMask_backing_defer_(
             ((0, 0), (740, 600)), NSWindowStyleMaskTitled | NSWindowStyleMaskClosable,
             NSBackingStoreBuffered, False)
-        self.ventana.setTitle_('Configuración de WorkBreak')
+        self.ventana.setTitle_('Configuración de WB')
         self.ventana.setReleasedWhenClosed_(False)
         raiz = self.ventana.contentView()
         self.etiqueta(raiz, 'Configuración', 28, 538, 500, 30, 23, True)
@@ -35,14 +35,14 @@ class VentanaConfiguracion(NSObject):
         navegador = self.pestana('Navegador')
 
         self.etiqueta(general, 'Inicio de sesión', 20, 235, 500, 25, 16, True)
-        self.etiqueta(general, 'Abrir WorkBreak al iniciar sesión', 20, 190, 540, 25, 14)
+        self.etiqueta(general, 'Abrir WB al iniciar sesión', 20, 190, 540, 25, 14)
         self.inicio = NSSwitch.alloc().initWithFrame_(((598, 188), (45, 28)))
         self.inicio.setTarget_(self)
         self.inicio.setAction_('alternarInicio:')
-        self.inicio.setAccessibilityLabel_('Abrir WorkBreak al iniciar sesión')
+        self.inicio.setAccessibilityLabel_('Abrir WB al iniciar sesión')
         general.addSubview_(self.inicio)
         self.inicio_info = self.etiqueta(general, '', 20, 125, 620, 55)
-        self.etiqueta(general, f'WorkBreak {VERSION}', 20, 78, 500, 22, 14, True)
+        self.etiqueta(general, f'WB {VERSION}', 20, 78, 500, 22, 14, True)
         self.etiqueta(general, 'Los cambios se guardan automáticamente, también desde el menú de la barra.',
                       20, 25, 620, 44)
 

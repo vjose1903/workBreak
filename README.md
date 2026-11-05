@@ -40,7 +40,7 @@ Puedes identificar tu procesador en ** → Acerca de este Mac**. Los enlaces 
 3. Configura el editor, navegador, acciones y tiempos.
 4. Pulsa **Iniciar bot**. Para terminar, selecciona **Detener bot**.
 
-La aplicación se instala como **WB.app**; conserva la configuración y los registros de WorkBreak. Al actualizar desde una versión llamada WorkBreak, puede ser necesario abrir **WB** manualmente al terminar la instalación.
+La aplicación y su ejecutable se llaman **WB** (`WB.app/Contents/MacOS/WB`); conserva la configuración y los registros de WorkBreak. Al actualizar desde una versión llamada WorkBreak, puede ser necesario abrir **WB** manualmente al terminar la instalación.
 
 El bot nunca comienza automáticamente al abrir la aplicación. **Windows está en desarrollo:** todavía no tiene instalador ni interfaz equivalente publicados.
 
@@ -59,7 +59,7 @@ Al iniciar, WorkBreak comprueba Accesibilidad y Monitorización de entrada. Si f
   <img src="docs/images/permisos.png" alt="Aviso de permisos con acceso directo a Accesibilidad y Monitorización de entrada" width="790" />
 </p>
 
-La app compilada solicita permiso de notificaciones al pulsar **Iniciar bot**. macOS recuerda tu respuesta: si lo rechazaste, puedes cambiarla en **Ajustes del Sistema → Notificaciones → WorkBreak**. Los permisos de Terminal o Python no sustituyen los de la app instalada.
+La app compilada solicita permiso de notificaciones al pulsar **Iniciar bot**. macOS recuerda tu respuesta: si lo rechazaste, puedes cambiarla en **Ajustes del Sistema → Notificaciones → WB**. Los permisos de Terminal o Python no sustituyen los de la app instalada.
 
 ## Configurar el bot
 
@@ -71,7 +71,7 @@ El menú y la ventana **Configuración…** comparten las mismas preferencias. L
 
 | Apartado | Opciones |
 | --- | --- |
-| **General** | Abrir WorkBreak al iniciar sesión. Disponible en la copia instalada en Aplicaciones; abre la W, sin iniciar el bot. |
+| **General** | Abrir WB al iniciar sesión. Disponible en la copia instalada en Aplicaciones; abre la W, sin iniciar el bot. |
 | **Actividad** | Editor y navegador, solo editor o solo navegador; duración total, pausa por inactividad y configuraciones recientes. |
 | **Editor** | Editor instalado, fuente de código, acciones y duración. En el menú, **Fuente de código** está dentro de Editor. |
 | **Navegador** | Navegador, webs, acciones y duración. En el menú, **Webs…** está dentro de Navegador. |
@@ -208,7 +208,7 @@ tail -n 100 -f "$HOME/Library/Logs/WorkBreak/workbreak.log"
 | --- | --- |
 | macOS bloquea la apertura | Revisa **Privacidad y seguridad**. La distribución está firmada con Developer ID; el workflow no la notariza. |
 | Un permiso figura activo pero sigue fallando | Comprueba que corresponde a la copia instalada. Si procede de otra compilación, elimina esa entrada y agrega WorkBreak nuevamente. |
-| No llega la notificación | Revisa **Notificaciones → WorkBreak** y Concentración. El aviso interno sirve como alternativa. |
+| No llega la notificación | Revisa **Notificaciones → WB** y Concentración. El aviso interno sirve como alternativa. |
 | No encuentra código | Comprueba extensiones, tamaño y rango de líneas del directorio. |
 | Se detiene al escribir | Consulta el registro: un cambio del archivo, contenido o foco puede activar la protección. |
 | No aparece una actualización o falla la descarga | Comprueba [Releases](https://github.com/vjose1903/workBreak/releases) y el estado de [Actions](https://github.com/vjose1903/workBreak/actions). |
