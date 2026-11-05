@@ -12,6 +12,9 @@ if sys.platform == 'darwin':
 @unittest.skipUnless(sys.platform == 'darwin', 'Interfaz exclusiva de macOS')
 class MenuMacTest(unittest.TestCase):
     def setUp(self):
+        deteccion = patch('mac_menu.navegador_predeterminado', return_value=None)
+        deteccion.start()
+        self.addCleanup(deteccion.stop)
         # Solo se ejercita configuración; no se crean iconos, ventanas ni procesos.
         with patch('mac_menu.ControladorBot', return_value=MagicMock()), \
                 patch('mac_menu.cargar_preferencias', return_value=None):

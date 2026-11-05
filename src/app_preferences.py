@@ -1,11 +1,33 @@
 """Preferencias persistentes y apertura de la aplicación al iniciar sesión."""
 import json
+import logging
 import os
 from pathlib import Path
 import sys
 import tempfile
 
 from app_paths import directorio_datos, leer_json, MAX_JSON_BYTES
+
+
+def navegador_predeterminado():
+    """Consulta el manejador HTTPS de macOS sin abrir ninguna web."""
+    if sys.platform != 'darwin':
+        return None
+    try:
+        from AppKit import NSWorkspace
+        from Foundation import NSBundle, NSURL
+        aplicacion = NSWorkspace.sharedWorkspace().URLForApplicationToOpenURL_(
+            NSURL.URLWithString_('https://example.com'))
+        if aplicacion is None:
+            return None
+        bundle = NSBundle.bundleWithURL_(aplicacion)
+        identificador = bundle.bundleIdentifier() if bundle is not None else None
+        return {'com.google.Chrome': 'chrome', 'com.microsoft.edgemac': 'edge',
+                'com.operasoftware.Opera': 'opera', 'org.mozilla.firefox': 'firefox'}.get(identificador)
+    except Exception as error:
+        logging.warning('No se pudo detectar el navegador predeterminado: %s',
+                        json.dumps({'error': str(error)}))
+        return None
 
 
 def cargar_preferencias():

@@ -1,5 +1,7 @@
 """Interfaz nativa de la barra de menús de macOS."""
 import os
+import json
+import logging
 from mac_time_range import RangoTiempo
 from timing_config import temporizacion_config, texto_tiempo, TITULOS, CLAVES_EDITOR, CLAVES_NAVEGADOR
 import copy
@@ -28,7 +30,7 @@ from editor_catalog import editores_instalados
 from app_paths import recurso
 from app_version import VERSION, APP_ID
 from app_updates import Actualizador
-from app_preferences import cargar_preferencias, guardar_preferencias
+from app_preferences import cargar_preferencias, guardar_preferencias, navegador_predeterminado
 from mac_settings import VentanaConfiguracion
 from app_controller import ControladorBot
 from mac_permissions import permisos_faltantes, abrir_configuracion, PERMISOS
@@ -494,6 +496,16 @@ class MenuWorkBreak(NSObject):
         instalados = editores_instalados()
         if self.config.get('editor') not in instalados and instalados:
             self.config['editor'] = next(iter(instalados))
+        # Una elección guardada, incluso «Ninguno», prevalece sobre macOS.
+        if 'browser' not in origen:
+            predeterminado = navegador_predeterminado()
+            if predeterminado is not None:
+                self.config['browser'] = predeterminado
+                try:
+                    guardar_preferencias(self.config)
+                except OSError as error:
+                    logging.warning('No se pudo guardar el navegador inicial: %s',
+                                    json.dumps({'error': str(error)}))
         self.ventana_configuracion = None
         self.saliendo = False
         self._estaba_activo = False

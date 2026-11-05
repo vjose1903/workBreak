@@ -15,6 +15,9 @@ if sys.platform == 'darwin':
 @unittest.skipUnless(sys.platform == 'darwin', 'Ventana nativa exclusiva de macOS')
 class ConfiguracionMacTest(unittest.TestCase):
     def setUp(self):
+        deteccion = patch('mac_menu.navegador_predeterminado', return_value=None)
+        deteccion.start()
+        self.addCleanup(deteccion.stop)
         NSApplication.sharedApplication()
         carpeta = tempfile.TemporaryDirectory()
         self.addCleanup(carpeta.cleanup)
@@ -30,6 +33,27 @@ class ConfiguracionMacTest(unittest.TestCase):
         self.ventana.preparar(self.menu)
         self.menu.ventana_configuracion = self.ventana
         self.addCleanup(self.ventana.ventana.close)
+
+    def test_navegador_inicial_y_cambio_manual_se_conservan_al_reabrir(self):
+        for eleccion in ('firefox', None):
+            with self.subTest(eleccion=eleccion):
+                import app_preferences
+                (app_preferences.directorio_datos() / 'preferences.json').unlink(missing_ok=True)
+                with patch('mac_menu.ControladorBot', return_value=MagicMock()), \
+                        patch('mac_menu.sys.frozen', False, create=True), \
+                        patch('mac_menu.navegador_predeterminado', return_value='chrome'):
+                    inicial = MenuWorkBreak.alloc().init()
+                self.assertEqual(inicial.config['browser'], 'chrome')
+                self.assertEqual(cargar_preferencias()['browser'], 'chrome')
+                inicial.controlador.activo = False
+                inicial.construir_menu = MagicMock()
+                inicial.configurar('browser:' + (eleccion or ''))
+                with patch('mac_menu.ControladorBot', return_value=MagicMock()), \
+                        patch('mac_menu.sys.frozen', False, create=True), \
+                        patch('mac_menu.navegador_predeterminado', return_value='edge') as detectar:
+                    reabierta = MenuWorkBreak.alloc().init()
+                self.assertEqual(reabierta.config['browser'], eleccion)
+                detectar.assert_not_called()
 
     def test_nombre_visible_de_la_ventana_es_wb(self):
         self.assertEqual(self.ventana.ventana.title(), 'Configuración de WB')

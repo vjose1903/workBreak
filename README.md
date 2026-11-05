@@ -80,7 +80,7 @@ El menú y la ventana **Configuración…** comparten las mismas preferencias. L
   <img src="docs/images/configuracion-editor.png" alt="Editor con selector instalado, fuente de código y acciones independientes" width="740" />
 </p>
 
-**Editores compatibles:** Visual Studio Code, Cursor, Windsurf y VS Code Insiders. Se muestran los instalados y se elige VS Code por defecto si está disponible. **Navegadores:** Chrome, Edge, Opera y Firefox.
+**Editores compatibles:** Visual Studio Code, Cursor, Windsurf y VS Code Insiders. Se muestran los instalados y se elige VS Code por defecto si está disponible. **Navegadores:** Chrome, Edge, Opera y Firefox. En la primera apertura se selecciona y guarda el navegador predeterminado de macOS si es compatible. Tu elección manual se conserva entre aperturas, incluso «Ninguno». Si el predeterminado no es compatible, debes elegir uno de los admitidos.
 
 - **Acciones del editor:** escribir, click, scroll y mover mouse.
 - **Acciones del navegador:** click, scroll y mover mouse.

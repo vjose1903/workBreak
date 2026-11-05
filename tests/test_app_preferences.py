@@ -7,11 +7,33 @@ import unittest
 from unittest.mock import MagicMock, patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / 'src'))
-from app_preferences import cargar_preferencias, guardar_preferencias, estado_inicio, establecer_inicio, inicio_disponible
+from app_preferences import cargar_preferencias, guardar_preferencias, estado_inicio, establecer_inicio, inicio_disponible, navegador_predeterminado
 from menu import Configuracion, _config_a_dict
 
 
 class PreferenciasTest(unittest.TestCase):
+    def test_detecta_manejador_https_compatible_y_no_sustituye_safari(self):
+        workspace, bundle = MagicMock(), MagicMock()
+        for identificador, esperado in [('com.google.Chrome', 'chrome'),
+                                        ('com.microsoft.edgemac', 'edge'),
+                                        ('com.operasoftware.Opera', 'opera'),
+                                        ('org.mozilla.firefox', 'firefox'),
+                                        ('com.apple.Safari', None)]:
+            with self.subTest(identificador=identificador), \
+                    patch('app_preferences.sys.platform', 'darwin'), \
+                    patch.dict(sys.modules, {'AppKit': SimpleNamespace(NSWorkspace=workspace),
+                                            'Foundation': SimpleNamespace(NSBundle=bundle, NSURL=MagicMock())}):
+                bundle.bundleWithURL_.return_value.bundleIdentifier.return_value = identificador
+                self.assertEqual(navegador_predeterminado(), esperado)
+
+    def test_deteccion_fallida_no_impide_abrir_la_app(self):
+        workspace = MagicMock()
+        workspace.sharedWorkspace.side_effect = RuntimeError('sin manejador')
+        with patch('app_preferences.sys.platform', 'darwin'), \
+                patch.dict(sys.modules, {'AppKit': SimpleNamespace(NSWorkspace=workspace)}), \
+                self.assertLogs(level='WARNING'):
+            self.assertIsNone(navegador_predeterminado())
+
     def test_inicio_disponible_desde_wb_instalada(self):
         with patch('app_preferences.sys.frozen', True, create=True):
             for ejecutable, esperado in [('/Applications/WB.app/Contents/MacOS/WB', True),
