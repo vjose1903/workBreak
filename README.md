@@ -147,6 +147,7 @@ Las fases y movimientos requieren tiempos positivos; las pausas admiten cero. Lo
 
 - **Teclado:** cualquier tecla, incluidos Command, Shift, Option y Control, pausa desde el inicio.
 - **Mouse:** tiene cinco segundos de margen al arrancar; después, movimiento, click o scroll activan la pausa.
+- **Cambio de ventana del navegador:** pausa la interacción y espera la inactividad configurada; no envía acciones a la nueva ventana.
 - **Reanudación:** cada actividad reinicia la cuenta. Una tecla o botón mantenido impide reanudar hasta soltarlo. Con pausa en cero, reanuda al soltar.
 - **Trabajo pendiente:** continúa las líneas interrumpidas. Si una copia quedó sin confirmar, conserva el portapapeles actual completo como nueva referencia.
 - **Detención:** **Detener bot** funciona durante la pausa. **Salir de WorkBreak** espera la limpieza. Llevar el mouse a una esquina de la pantalla principal activa la parada de emergencia.

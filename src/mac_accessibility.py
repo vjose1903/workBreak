@@ -98,6 +98,26 @@ def rectangulo_aplicacion(nombre):
     return tuple(valores)
 
 
+def identidad_ventana_aplicacion(nombre):
+    """Identifica la ventana enfocada por Accesibilidad, sin confundir emergentes de Quartz."""
+    import Quartz as q
+    pid = aplicacion(nombre).processIdentifier()
+    if pid_aplicacion_al_frente() != pid:
+        return None
+    x, y, ancho, alto = rectangulo_aplicacion(nombre)
+    ventanas = q.CGWindowListCopyWindowInfo(q.kCGWindowListOptionOnScreenOnly, q.kCGNullWindowID) or []
+    for ventana in ventanas:
+        if ventana.get('kCGWindowOwnerPID') != pid or ventana.get('kCGWindowLayer') != 0:
+            continue
+        limites = ventana.get('kCGWindowBounds', {})
+        if all(abs(limites.get(clave, float('inf')) - valor) <= 1
+               for clave, valor in zip(('X', 'Y', 'Width', 'Height'), (x, y, ancho, alto))):
+            if pid_aplicacion_al_frente() == pid:
+                return ventana.get('kCGWindowNumber')
+            return None
+    return None
+
+
 def activar_aplicacion(nombre):
     from AppKit import NSApplicationActivateIgnoringOtherApps
     return bool(aplicacion(nombre).activateWithOptions_(NSApplicationActivateIgnoringOtherApps))

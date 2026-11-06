@@ -274,9 +274,49 @@ class AutomationSafetyTest(unittest.TestCase):
         self.web._ventana_web = 1
         with patch.object(self.web, 'identidad_ventana_activa', return_value=2), \
                 patch.object(teclado, 'moveTo') as mover:
-            with self.assertRaisesRegex(RuntimeError, 'ventana del navegador'):
+            with self.assertRaisesRegex(PausaPorActividad, 'ventana del navegador'):
                 self.web._move_to(200, 200)
         mover.assert_not_called()
+
+    def test_cambio_foco_web_registra_pausa_y_conserva_el_turno(self):
+        self.web.set_paginas(['https://example.com'])
+        monitor = MagicMock()
+        self.web.monitor_actividad = monitor
+        with patch.object(self.web, '_antes_accion'), \
+                patch.object(self.web, 'activar_navegador', return_value=True), \
+                patch.object(self.web, 'copiar_al_portapapeles', return_value=True), \
+                patch.object(self.web, 'interactuar_con_pagina', side_effect=lambda *_: self.web._pausar_por_foco(2)):
+            with self.assertRaises(PausaPorActividad):
+                self.web.interactuar_web(30)
+        monitor.registrar.assert_called_once_with(causa='cambio de foco del navegador', inmediata=True)
+        self.assertTrue(self.web._contexto['intervenida'])
+        self.assertIsNotNone(self.web._turno_restante)
+        self.assertIsNone(self.web._ventana_web)
+
+    def test_reintento_nativo_chrome_no_pega_otra_vez_la_url(self):
+        anterior, pagina = 'https://dos.example', 'https://uno.example'
+        self.web._pestana_bot = {'pagina': anterior, 'url': anterior}
+        with patch.object(self.web, 'activar_navegador', return_value=True), \
+                patch.object(self.web, 'copiar_al_portapapeles', return_value=True) as copiar, \
+                patch.object(self.web, '_url_pestana', side_effect=[anterior, anterior, pagina]), \
+                patch.object(self.web, '_navegar_sin_barra', return_value=True) as nativa, \
+                patch.object(self.web, 'interactuar_con_pagina') as interactuar:
+            self.web._procesar_pagina(pagina)
+        copiar.assert_called_once_with(pagina)
+        nativa.assert_called_once_with(pagina)
+        interactuar.assert_called_once()
+
+    def test_navegacion_nativa_construye_url_escapada_y_propaga_pausa(self):
+        self.web.is_mac = True
+        with patch.object(self.web, '_ejecutar_proceso') as ejecutar:
+            self.assertTrue(WebInteractor._navegar_sin_barra(self.web, 'https://example.com/?q="texto"'))
+        self.assertIn('set URL of active tab of front window', ejecutar.call_args.args[0][-1])
+        self.assertIn('\\"texto\\"', ejecutar.call_args.args[0][-1])
+        with patch.object(self.web, '_antes_accion', side_effect=PausaPorActividad), \
+                patch.object(self.web, '_ejecutar_proceso') as ejecutar:
+            with self.assertRaises(PausaPorActividad):
+                WebInteractor._navegar_sin_barra(self.web, 'https://example.com')
+        ejecutar.assert_not_called()
 
     def test_escritura_cancela_antes_del_evento_si_cambia_ventana(self):
         self.editor._ventana_escritura_editor = 12
@@ -466,6 +506,9 @@ class AutomationSafetyTest(unittest.TestCase):
         ventanas_editor.start()
         self.addCleanup(ventanas_editor.stop)
         # Nunca consultar el navegador real con AppleScript.
+        reintento = patch.object(self.web, '_navegar_sin_barra', return_value=False)
+        reintento.start()
+        self.addCleanup(reintento.stop)
         silenciosa = patch.object(self.web, '_leer_url_silenciosa', return_value=None)
         silenciosa.start()
         self.addCleanup(silenciosa.stop)
@@ -521,7 +564,7 @@ class AutomationSafetyTest(unittest.TestCase):
                 WebInteractor._confirmar_destino_web(self.web)
         with patch.object(self.web, 'identidad_ventana_activa', return_value=2), \
                 patch.object(self.web, '_leer_url_silenciosa') as leer:
-            with self.assertRaises(RuntimeError):
+            with self.assertRaises(PausaPorActividad):
                 WebInteractor._confirmar_destino_web(self.web)
             leer.assert_not_called()
 

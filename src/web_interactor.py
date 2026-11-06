@@ -220,6 +220,7 @@ class WebInteractor(BaseAutomation):
             if not self._queda_tiempo(tiempo_final):
                 return False
 
+            self._ventana_web = self.identidad_ventana_activa()
             if not contexto['abierta'] and self._reutilizar_pestana(contexto, pagina):
                 logging.info("Se reutiliza la pestaña abierta por el bot")
             if not contexto['abierta']:
@@ -232,16 +233,17 @@ class WebInteractor(BaseAutomation):
                 for intento in range(2):
                     if not self._queda_tiempo(tiempo_final):
                         return False
-                    if not self.copiar_al_portapapeles(pagina):
-                        raise RuntimeError('No se pudo copiar la URL; se cancela la navegación')
-                    self._hotkey(self.cmd_key, 'l')
-                    self._esperar(0.1)
-                    self._hotkey(self.cmd_key, 'v')
-                    self._esperar(0.1)
-                    if not self._queda_tiempo(tiempo_final):
-                        return False
                     contexto['navegacion_pendiente'] = True
-                    self._press('return')
+                    if intento == 0 or not self._navegar_sin_barra(pagina):
+                        if not self.copiar_al_portapapeles(pagina):
+                            raise RuntimeError('No se pudo copiar la URL; se cancela la navegación')
+                        self._hotkey(self.cmd_key, 'l')
+                        self._esperar(0.1)
+                        self._hotkey(self.cmd_key, 'v')
+                        self._esperar(0.1)
+                        if not self._queda_tiempo(tiempo_final):
+                            return False
+                        self._press('return')
                     self._esperar(2)
                     actual = self._url_pestana()
                     # Admitir redirecciones, pero nunca confundir la web anterior con la solicitada.
@@ -273,6 +275,7 @@ class WebInteractor(BaseAutomation):
             interrumpido = True
             raise
         finally:
+            self._ventana_web = None
             if contexto['abierta'] and not interrumpido and not contexto['intervenida']:
                 # La activación no confirma la pestaña: la próxima visita la reutiliza solo
                 # si la pestaña activa sigue en la dirección que dejó el bot.
@@ -280,6 +283,23 @@ class WebInteractor(BaseAutomation):
                 self._pestana_bot = ({'pagina': contexto['pagina'], 'url': contexto['url']}
                                      if reutilizable else None)
                 logging.info("Visita finalizada; pestaña conservada")
+
+    def _navegar_sin_barra(self, pagina):
+        """Reintento nativo para Chromium cuando la barra no cambió de dirección."""
+        if not (self.is_mac and self.browser in self.url_applescript and self._url_silenciosa_disponible):
+            return False
+        self._antes_accion()
+        nombre = self.browser_configs[self.browser]['mac']
+        script = (f'tell application "{nombre}" to set URL of active tab of front window to '
+                  + json.dumps(pagina, ensure_ascii=False))
+        try:
+            self._ejecutar_proceso(['osascript', '-e', script], check=True,
+                                  capture_output=True, text=True, timeout=5)
+        except (subprocess.CalledProcessError, subprocess.TimeoutExpired) as error:
+            logging.warning('Falló el reintento de navegación nativa: %s', json.dumps({'error': str(error)}))
+            return False
+        self._antes_accion()
+        return True
 
     def _reutilizar_pestana(self, contexto, pagina) -> bool:
         """Evita abrir una pestaña nueva en cada visita o reintento."""
@@ -401,16 +421,39 @@ class WebInteractor(BaseAutomation):
         self._click()
         self._ultimo_click = self._posicion_mouse()
 
+    def identidad_ventana_activa(self):
+        if not self.is_mac:
+            return super().identidad_ventana_activa()
+        BaseAutomation._antes_accion(self)
+        from mac_accessibility import identidad_ventana_aplicacion
+        identidad = identidad_ventana_aplicacion(self.browser_configs[self.browser]['mac'])
+        if identidad is None:
+            self._pausar_por_foco(None)
+        return identidad
+
+    def _pausar_por_foco(self, actual):
+        logging.info('Pausa por cambio de foco del navegador: %s', json.dumps({
+            'ventana_esperada': self._ventana_web, 'ventana_actual': actual}))
+        if self.monitor_actividad is not None:
+            self.monitor_actividad.registrar(causa='cambio de foco del navegador', inmediata=True)
+        raise PausaPorActividad('Cambió la ventana del navegador; se pausa la interacción')
+
+    def _confirmar_ventana_web(self):
+        actual = self.identidad_ventana_activa()
+        if actual != self._ventana_web:
+            self._pausar_por_foco(actual)
+
     def _antes_accion(self):
         super()._antes_accion()
         ventana = getattr(self, '_ventana_web', None)
-        if ventana is not None and self.identidad_ventana_activa() != ventana:
-            raise RuntimeError('Cambió la ventana del navegador; se cancela la interacción')
+        if ventana is not None:
+            self._confirmar_ventana_web()
 
     def _comprobar_area_mouse(self):
         super()._comprobar_area_mouse()
-        if self._ventana_web is None or self.identidad_ventana_activa() != self._ventana_web:
-            raise RuntimeError('Cambió la ventana del navegador; se cancela la interacción')
+        if self._ventana_web is None:
+            self._pausar_por_foco(None)
+        self._confirmar_ventana_web()
 
     def _click(self):
         self._confirmar_destino_web()
@@ -421,8 +464,7 @@ class WebInteractor(BaseAutomation):
         super()._scroll(cantidad)
 
     def _confirmar_destino_web(self):
-        if self.identidad_ventana_activa() != self._ventana_web:
-            raise RuntimeError('Cambió la ventana del navegador; se cancela la interacción')
+        self._confirmar_ventana_web()
         if self._url_interaccion is None:
             return
         actual = self._leer_url_silenciosa()
