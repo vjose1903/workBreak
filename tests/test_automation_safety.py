@@ -1092,6 +1092,56 @@ class AutomationSafetyTest(unittest.TestCase):
                         llamadas.index(unittest.mock.call(self.editor.cmd_key, 'w')))
         self.assertEqual(self.editor.lineas_actuales, ['const a = 1;'])
 
+    def test_rotacion_mac_espera_la_ruta_nueva_y_conserva_el_temporal_si_no_abre(self):
+        for abre in (True, False):
+            with self.subTest(abre=abre), tempfile.TemporaryDirectory() as carpeta:
+                reloj = [0.0]
+                solicitud = []
+                teclas = []
+                anterior = Path(carpeta) / 'anterior.ts'
+                anterior.touch()
+                nuevo = Path(carpeta) / 'nuevo.ts'
+                self.editor.is_mac, self.editor.is_windows = True, False
+                self.editor.editor_actual = 'vsCode'
+                self.editor.EDITOR_ABIERTO = True
+                self.editor.reutilizar_ventana = False
+                self.editor.directorio_trabajo = carpeta
+                self.editor.ruta_archivo = str(anterior)
+                self.editor._codigo_pendiente = None
+                self.editor.fuente_codigo = SimpleNamespace(obtener_codigo=lambda: 'const nuevo = true;',
+                                                            nombre_archivo=nuevo.name)
+
+                def documento(_bundle):
+                    if solicitud and abre and reloj[0] >= solicitud[0] + 2.5:
+                        return nuevo.as_uri()
+                    self.assertTrue(anterior.exists())
+                    return anterior.as_uri()
+
+                def abrir(_cmd):
+                    solicitud.append(reloj[0])
+                    return True
+
+                with patch('editor_interactor.time.monotonic', side_effect=lambda: reloj[0]), \
+                        patch.object(self.editor, '_esperar', side_effect=lambda s: reloj.__setitem__(0, reloj[0] + s)), \
+                        patch.object(self.editor, '_activar_si_necesario', return_value=True), \
+                        patch.object(self.editor, 'guardar_portapapeles_original'), \
+                        patch.object(self.editor, 'copiar_al_portapapeles', return_value=True) as copiar, \
+                        patch.object(self.editor, '_comando_abrir_editor', return_value=['code', str(nuevo)]), \
+                        patch.object(self.editor, 'ejecutar_comando', side_effect=abrir), \
+                        patch.object(self.editor, '_hotkey', side_effect=lambda _, t: teclas.append((t, reloj[0]))), \
+                        patch.object(editor_interactor, 'documento_editor', side_effect=documento):
+                    if abre:
+                        self.editor.inyectar_codigo()
+                        self.assertFalse(anterior.exists())
+                        copiar.assert_called_once_with('const nuevo = true;')
+                        self.assertGreaterEqual(next(t for tecla, t in teclas if tecla == 'v'), solicitud[0] + 2.5)
+                    else:
+                        with self.assertRaisesRegex(EditorNoDisponible, 'nuevo archivo.*no está activo'):
+                            self.editor.inyectar_codigo()
+                        self.assertTrue(anterior.exists())
+                        copiar.assert_not_called()
+                        self.assertNotIn('v', [tecla for tecla, _ in teclas])
+
     def test_codigo_generado_nombra_la_pestana_con_su_componente(self):
         from code_generator import CodeGenerator
         generador = CodeGenerator()

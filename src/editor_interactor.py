@@ -187,7 +187,7 @@ class EditorInteractor(BaseAutomation):
             return os.path.basename(nombre)
         return 'index.tsx'
 
-    def _cambiar_archivo(self, nombre: str) -> None:
+    def _cambiar_archivo(self, nombre: str, codigo: str) -> None:
         """Cierra la pestaña actual del bot y abre otra con el nombre del nuevo código."""
         anterior = self.ruta_archivo
         self._asegurar_destino()
@@ -198,10 +198,15 @@ class EditorInteractor(BaseAutomation):
         self._hotkey(self.cmd_key, 'w')
         self._esperar(0.5)
         self.ruta_archivo = self._crear_archivo_temporal(nombre)
+        self._codigo_pendiente = codigo
+        self.lineas_actuales = None
         cmd = self._comando_abrir_editor(self.editor_actual, self.ruta_archivo)
         if not cmd or not self.ejecutar_comando(cmd):
             raise EditorNoDisponible("No se pudo abrir el archivo del nuevo código")
-        self._esperar(1)
+        if self.is_mac:
+            self._asegurar_destino(esperar_apertura=True)
+        else:
+            self._esperar(1)
         try:
             os.unlink(anterior)
         except OSError:
@@ -322,7 +327,7 @@ class EditorInteractor(BaseAutomation):
             # Un salto directo: un recorrido entre pantallas atraviesa huecos sin monitor.
             self._move_to(*centro)
 
-    def _asegurar_destino(self) -> None:
+    def _asegurar_destino(self, *, esperar_apertura=False) -> None:
         """Rechaza la entrada si no está activo el archivo temporal de esta sesión."""
         if not self.editor_actual or not self.ruta_archivo:
             raise EditorNoDisponible("No hay archivo temporal confirmado")
@@ -333,6 +338,14 @@ class EditorInteractor(BaseAutomation):
             raise EditorNoDisponible("El editor no pasó a primer plano; se cancela la entrada")
         try:
             documento_previo = documento_editor(EDITORES[self.editor_actual]['bundle']) if self.is_mac else ''
+            if self.is_mac and esperar_apertura:
+                # El CLI termina al entregar la solicitud, no al activar el archivo.
+                documento_previo = self._esperar_documento_mac(documento_previo)
+                if not _misma_ruta(documento_previo, self.ruta_archivo):
+                    logging.warning('Rotación sin documento confirmado: %s', json.dumps({
+                        'editor': self.editor_actual, 'esperado': self.ruta_archivo,
+                        'documento_activo': documento_previo}, ensure_ascii=False))
+                    raise EditorNoDisponible("El nuevo archivo del bot no está activo; se cancela la entrada")
             # Enfocar código también cuando el terminal integrado tenía el foco.
             self._hotkey(self.cmd_key, "1")
             self._esperar(0.15)
@@ -351,11 +364,7 @@ class EditorInteractor(BaseAutomation):
                     cmd = self._comando_abrir_editor(self.editor_actual, self.ruta_archivo)
                     if not cmd or not self.ejecutar_comando(cmd):
                         raise EditorNoDisponible('No se pudo enfocar el archivo temporal en el grupo de código')
-                    limite = time.monotonic() + 5
-                    while not _misma_ruta(documento, self.ruta_archivo) and time.monotonic() < limite:
-                        self._esperar(0.1)
-                        documento = documento_editor(EDITORES[self.editor_actual]['bundle'])
-                        self._antes_accion()
+                    documento = self._esperar_documento_mac(documento)
                 if not _misma_ruta(documento, self.ruta_archivo):
                     raise EditorNoDisponible("El archivo del bot no está activo; se cancela la entrada")
                 return
@@ -379,6 +388,16 @@ class EditorInteractor(BaseAutomation):
             logging.error("Fallo verificando el editor: %s", json.dumps(detalle, ensure_ascii=False))
             motivo = stderr or str(e)
             raise EditorNoDisponible(f"No se pudo verificar el archivo temporal: {motivo.strip()}") from e
+
+    def _esperar_documento_mac(self, documento: str) -> str:
+        limite = time.monotonic() + 5
+        bundle = EDITORES[self.editor_actual]['bundle']
+        self._antes_accion()
+        while not _misma_ruta(documento, self.ruta_archivo) and time.monotonic() < limite:
+            self._esperar(0.1)
+            documento = documento_editor(bundle)
+            self._antes_accion()
+        return documento
 
     def _esperar_editor_al_frente(self, info: dict, limite: float = 3.0) -> bool:
         """Espera a que el editor esté de verdad en primer plano antes de enviarle teclas.
@@ -899,7 +918,7 @@ class EditorInteractor(BaseAutomation):
         """Reemplaza el contenido del editor con un bloque grande de código realista"""
         self.guardar_portapapeles_original()
         if self._codigo_pendiente is not None:
-            codigo, self._codigo_pendiente = self._codigo_pendiente, None
+            codigo = self._codigo_pendiente
         else:
             codigo = self._obtener_codigo()
             nombre = self._nombre_archivo_codigo()
@@ -907,7 +926,7 @@ class EditorInteractor(BaseAutomation):
             if self.is_windows and self.directorio_trabajo:
                 actual = actual.removeprefix(f'workbreak_{Path(self.directorio_trabajo).name}_')
             if self.EDITOR_ABIERTO and self.ruta_archivo and nombre != actual:
-                self._cambiar_archivo(nombre)
+                self._cambiar_archivo(nombre, codigo)
 
         if not self.copiar_al_portapapeles(codigo):
             raise EditorNoDisponible('No se pudo copiar el código; se cancela la inyección')
@@ -917,6 +936,7 @@ class EditorInteractor(BaseAutomation):
         self._hotkey(self.cmd_key, 'a')
         self._esperar(0.15)
         self._hotkey(self.cmd_key, 'v')
+        self._codigo_pendiente = None
         self.lineas_actuales = codigo.splitlines()
         self._fases_con_archivo = 0
         self._archivo_desde = time.monotonic()
