@@ -242,7 +242,7 @@ class EditorInteractor(BaseAutomation):
             self.editor_actual = efectivo
             self.EDITOR_ABIERTO = True  # Una pausa en la preparación debe recuperar esta misma ventana.
             self._comprobar_atajo_corrida()
-            self._asegurar_destino()
+            self._asegurar_destino(esperar_apertura=True)
             self._llevar_mouse_al_editor()
         except (EditorNoDisponible, pyautogui.FailSafeException):
             raise
@@ -342,7 +342,7 @@ class EditorInteractor(BaseAutomation):
                 # El CLI termina al entregar la solicitud, no al activar el archivo.
                 documento_previo = self._esperar_documento_mac(documento_previo)
                 if not _misma_ruta(documento_previo, self.ruta_archivo):
-                    logging.warning('Rotación sin documento confirmado: %s', json.dumps({
+                    logging.warning('Apertura sin documento confirmado: %s', json.dumps({
                         'editor': self.editor_actual, 'esperado': self.ruta_archivo,
                         'documento_activo': documento_previo}, ensure_ascii=False))
                     raise EditorNoDisponible("El nuevo archivo del bot no está activo; se cancela la entrada")

@@ -1559,7 +1559,25 @@ class AutomationSafetyTest(unittest.TestCase):
                 self.editor.abrir_editor('vsCode')
                 self.assertEqual(self.editor.reutilizar_ventana, existente)
                 lanzar.assert_called_once_with('vsCode', '/tmp/bot/archivo.tsx')
-                verificar.assert_called_once()
+                verificar.assert_called_once_with(esperar_apertura=True)
+
+    def test_arranque_con_codigo_generado_espera_el_archivo_temporal_activo(self):
+        self.editor.is_mac, self.editor.is_windows = True, False
+        ruta = '/tmp/bot/OrderList.tsx'
+        previo, activo = 'file:///tmp/otra-pestana.tsx', Path(ruta).as_uri()
+        self.editor.acciones = {'escribir': True, 'click': False, 'scroll': False, 'mover_mouse': False}
+        with patch.object(self.editor, '_obtener_codigo', return_value='export const OrderList = () => null;'), \
+                patch.object(self.editor, '_crear_archivo_temporal', return_value=ruta), \
+                patch.object(self.editor, '_editor_tiene_ventana', return_value=True), \
+                patch.object(self.editor, '_lanzar_editor', return_value='vsCode'), \
+                patch.object(self.editor, '_esperar_ventana_editor', return_value=True), \
+                patch.object(self.editor, '_activar_si_necesario', return_value=True), \
+                patch.object(self.editor, '_esperar_editor_al_frente', return_value=True), \
+                patch.object(self.editor, '_comprobar_atajo_corrida'), \
+                patch.object(editor_interactor, 'documento_editor', side_effect=[previo, previo, activo, activo]), \
+                patch.object(self.editor, '_llevar_mouse_al_editor') as continuar:
+            self.editor.abrir_editor('vsCode')
+        continuar.assert_called_once()
 
     @unittest.skipUnless(sys.platform == 'darwin', 'Lanzamiento nativo de VS Code en macOS')
     def test_abrir_espacio_nuevo_y_recuperar_solo_el_archivo(self):
