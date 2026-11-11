@@ -841,7 +841,7 @@ class EditorInteractor(BaseAutomation):
         original = self.lineas_actuales[numero - 1]
         esperada = self._lineas_observadas.get(numero, original)
         actual = self._leer_linea_completa_mac()
-        coincide = actual is not None and actual == esperada
+        coincide = actual is not None and (actual == esperada or self._tiene_autocierre_pendiente(numero, actual))
         if not coincide:
             logging.error("Comprobación de línea fallida: %s", json.dumps({
                 "linea": numero, "desplazamiento": self.desplazamiento,
@@ -865,6 +865,33 @@ class EditorInteractor(BaseAutomation):
                 raise EditorNoDisponible("La selección abarca más de una línea; se cancela la edición")
         return actual
 
+    def _tiene_autocierre_pendiente(self, numero, actual):
+        if (not self.reutilizar_ventana or not self.bloque_actual
+                or self.indice_linea >= len(self.bloque_actual)
+                or numero != self.inicio_bloque + self.indice_linea + 1):
+            return False
+        linea = self.bloque_actual[self.indice_linea]
+        if not 0 < self.desplazamiento < len(linea):
+            return False
+        prefijo = linea[:self.desplazamiento]
+        if not actual.startswith(prefijo):
+            return False
+        sufijo = actual[len(prefijo):]
+        if not sufijo or any(c not in ')]}' for c in sufijo):
+            return False
+        pares = {'(': ')', '[': ']', '{': '}'}
+        cierres = []
+        for c in prefijo:
+            if c in pares:
+                cierres.append(pares[c])
+            elif cierres and c == cierres[-1]:
+                cierres.pop()
+        if not ''.join(reversed(cierres)).startswith(sufijo):
+            return False
+        # Solo tolerar cierres que también aparecen, en orden, en lo que falta escribir.
+        resto = iter(linea[self.desplazamiento:])
+        return all(c in resto for c in sufijo)
+
     def _guardar_linea_actual_mac(self):
         if not (self.is_mac or self.is_windows) or not self.bloque_actual:
             return
@@ -873,7 +900,7 @@ class EditorInteractor(BaseAutomation):
         if actual is None:
             raise EditorNoDisponible("No se pudo guardar el estado de la línea reescrita")
         esperada = self.bloque_actual[self.indice_linea][:self.desplazamiento]
-        if actual != esperada:
+        if actual != esperada and not self._tiene_autocierre_pendiente(numero, actual):
             logging.error("Contenido de línea inesperado: %s", json.dumps({
                 "linea": numero, "desplazamiento": self.desplazamiento,
                 "longitud_esperada": len(esperada), "longitud_leida": len(actual),
@@ -951,6 +978,7 @@ class EditorInteractor(BaseAutomation):
         self._liberar_modificadores()
         if self.reutilizar_ventana:
             self._sincronizar_codigo_pegado()
+        self._resincronizaciones = 0
         logging.info(f"Código inyectado: {len(self.lineas_actuales)} líneas, {len(codigo)} caracteres")
 
     def _sincronizar_codigo_pegado(self) -> None:

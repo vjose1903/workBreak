@@ -1645,6 +1645,7 @@ class AutomationSafetyTest(unittest.TestCase):
 
     def test_ventana_reutilizada_toma_el_codigo_que_muestra_el_editor(self):
         self.editor.reutilizar_ventana = True
+        self.editor._resincronizaciones = 3
         self.editor.fuente_codigo = MagicMock(obtener_codigo=MagicMock(return_value='a\n    b'))
         with patch.object(self.editor, 'guardar_portapapeles_original'), \
                 patch.object(self.editor, '_asegurar_destino'), \
@@ -1653,6 +1654,35 @@ class AutomationSafetyTest(unittest.TestCase):
             self.editor.inyectar_codigo()
         # El formateo del usuario al pegar cambió la sangría: se usa lo que quedó.
         self.assertEqual(self.editor.lineas_actuales, ['a', '  b'])
+        self.assertEqual(self.editor._resincronizaciones, 0)
+
+    def test_reanuda_linea_con_autocierre_sin_avanzar_sobre_el_cierre(self):
+        self.editor.is_mac = True
+        self.editor.reutilizar_ventana = True
+        for prefijo, cierre, linea in (
+            ('  const allowed = new Set(STATIC_AL', ')', '  const allowed = new Set(STATIC_ALLOWED);'),
+            ('import type { XMiniL', '}', 'import type { XMiniList } from "./types";'),
+        ):
+            with self.subTest(cierre=cierre), patch.object(self.editor, '_leer_linea_completa_mac',
+                                                           return_value=prefijo + cierre), \
+                    patch.object(self.editor, '_press') as pulsar:
+                self.editor.lineas_actuales = self.editor.bloque_actual = [linea]
+                self.editor.desplazamiento = len(prefijo)
+                self.editor._lineas_observadas[1] = prefijo
+                EditorInteractor._fin_linea(self.editor)
+                self.assertEqual(pulsar.call_args_list, [unittest.mock.call('right')] * len(prefijo))
+                EditorInteractor._guardar_linea_actual_mac(self.editor)
+                self.assertEqual(self.editor._lineas_observadas[1], prefijo + cierre)
+
+    def test_autocierre_no_admite_cambios_en_el_prefijo_ni_cierres_incompatibles(self):
+        self.editor.is_mac = True
+        self.editor.reutilizar_ventana = True
+        self.editor.bloque_actual = ['const x = new Set(ALLOWED);']
+        self.editor.desplazamiento = len('const x = new Set(AL')
+        for actual in ('const y = new Set(AL)', 'const x = new Set(AL}', 'const x = new Set(AL)x'):
+            with self.subTest(actual=actual), patch.object(self.editor, '_leer_linea_completa_mac', return_value=actual):
+                with self.assertRaises(LineaDesincronizada):
+                    EditorInteractor._guardar_linea_actual_mac(self.editor)
 
     def test_ventana_reutilizada_resincroniza_en_vez_de_detenerse(self):
         self.editor.reutilizar_ventana = True
