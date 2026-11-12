@@ -4,10 +4,14 @@ on:
   workflow_dispatch:
     inputs:
       tag:
-        description: 'Tag existente que se desea compilar (vX.Y.Z)'
-        required: true
+        description: 'Tag existente (vX.Y.Z). Vacío: preparar la caché y ejecutar pruebas'
+        required: false
         type: string
   push:
+    branches: [main]
+    paths:
+      - .github/workflows/release-macos.yml
+      - requirements-build-mac.lock
     tags:
       - 'v*.*.*'
 
@@ -20,6 +24,7 @@ concurrency:
 
 jobs:
   validate:
+    if: github.ref_type == 'tag' || inputs.tag != ''
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
@@ -49,15 +54,24 @@ jobs:
         with:
           ref: ${{ inputs.tag || github.ref }}
       - uses: actions/setup-python@v7
+        id: python
         with:
           python-version: '3.12'
-          cache: pip
-          cache-dependency-path: requirements-build-mac.lock
+      - name: Restaurar entorno Python
+        id: deps
+        uses: actions/cache@v6
+        with:
+          path: .venv-ci
+          key: venv-ci-v1-${{ matrix.runner }}-${{ steps.python.outputs.python-version }}-${{ hashFiles('requirements-build-mac.lock') }}
       - name: Instalar dependencias de compilación
-        run: python -m pip install -r requirements-build-mac.lock
+        if: steps.deps.outputs.cache-hit != 'true'
+        run: |
+          python -m venv .venv-ci
+          .venv-ci/bin/python -m pip install -r requirements-build-mac.lock
       - name: Pruebas sin automatización real
-        run: python -m unittest discover -s tests
+        run: .venv-ci/bin/python -m unittest discover -s tests
   build:
+    if: github.ref_type == 'tag' || inputs.tag != ''
     # Compila en paralelo con validate y test: un fallo en uno no oculta los errores de los demás.
     strategy:
       fail-fast: false
@@ -74,12 +88,20 @@ jobs:
         with:
           ref: ${{ inputs.tag || github.ref }}
       - uses: actions/setup-python@v7
+        id: python
         with:
           python-version: '3.12'
-          cache: pip
-          cache-dependency-path: requirements-build-mac.lock
+      - name: Restaurar entorno Python
+        id: deps
+        uses: actions/cache@v6
+        with:
+          path: .venv-ci
+          key: venv-ci-v1-${{ matrix.runner }}-${{ steps.python.outputs.python-version }}-${{ hashFiles('requirements-build-mac.lock') }}
       - name: Instalar dependencias de compilación
-        run: python -m pip install -r requirements-build-mac.lock
+        if: steps.deps.outputs.cache-hit != 'true'
+        run: |
+          python -m venv .venv-ci
+          .venv-ci/bin/python -m pip install -r requirements-build-mac.lock
       - name: Importar certificados Developer ID
         env:
           CERTIFICATE_BASE64: ${{ secrets.WORKBREAK_CERTIFICATE_P12_BASE64 }}
@@ -108,7 +130,7 @@ jobs:
           WORKBREAK_CODESIGN_IDENTITY: ${{ vars.WORKBREAK_CODESIGN_IDENTITY }}
           WORKBREAK_INSTALLER_IDENTITY: ${{ vars.WORKBREAK_INSTALLER_IDENTITY }}
           WORKBREAK_TEAM_ID: ${{ vars.WORKBREAK_TEAM_ID }}
-        run: python scripts/build_macos.py --no-migrate
+        run: .venv-ci/bin/python scripts/build_macos.py --no-migrate
       - name: Eliminar certificados del runner
         if: ${{ always() }}
         run: |

@@ -121,6 +121,10 @@ Un tag `vX.Y.Z` activa [release-macos.yml](../.github/workflows/release-macos.ym
 3. Genera DMG, PKG y sumas SHA-256.
 4. Publica los DMG cuando validación, pruebas y ambas compilaciones finalizan correctamente.
 
+Las pruebas y la compilación reutilizan las dependencias Python ya instaladas. La caché distingue el runner (Intel o Apple Silicon), la versión exacta de Python y el contenido de `requirements-build-mac.lock`. Si no hay coincidencia, se instala desde el archivo de dependencias.
+
+Los cambios al workflow o al archivo de dependencias en `main` ejecutan solo las pruebas de macOS y preparan una caché que los tags pueden restaurar. También puedes preparar o renovar la caché con **Run workflow** en `main` dejando el tag vacío. La firma, los certificados y los instaladores quedan fuera de la caché.
+
 Cada Release contiene DMG versionados y copias de nombre fijo para los enlaces del README. Los PKG separados y las sumas quedan como artefactos de Actions; el actualizador usa los DMG versionados y el SHA-256 anunciado por GitHub.
 
 Una reejecución puede completar un borrador, pero no reemplaza archivos de una Release publicada. Cada corrección publicada necesita otra versión y tag.
