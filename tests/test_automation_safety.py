@@ -1054,6 +1054,17 @@ class AutomationSafetyTest(unittest.TestCase):
                 with self.assertRaisesRegex(EditorNoDisponible, 'no está activo'):
                     self.editor._asegurar_destino()
 
+    def test_documento_vacio_se_confirma_por_titulo_de_ventana(self):
+        self.editor.editor_actual = 'vsCode'
+        self.editor.ruta_archivo = '/tmp/bot/queries.ts'
+        for titulo, esperado in (('queries.ts — xMaster', True), ('queries.ts', True),
+                                 ('otro.ts — queries.ts', False), ('', False)):
+            with self.subTest(titulo=titulo), \
+                    patch.object(editor_interactor, 'documento_editor', return_value=''), \
+                    patch.object(editor_interactor, 'titulo_editor', return_value=titulo):
+                self.assertEqual(editor_interactor._misma_ruta(self.editor._documento_activo(),
+                                                               self.editor.ruta_archivo), esperado)
+
     def test_ruta_del_documento_admite_var_y_espacios_codificados(self):
         carpeta = tempfile.mkdtemp()
         ruta = os.path.join(carpeta, 'mi archivo.ts')

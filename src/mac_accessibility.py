@@ -86,6 +86,12 @@ def documento_editor(bundle):
     return str(documento or '')
 
 
+def titulo_editor(bundle):
+    """Título de la ventana enfocada del editor (vacío si no lo expone)."""
+    ventana = atributo(elemento_aplicacion(bundle), 'AXFocusedWindow')
+    return str(atributo(ventana, 'AXTitle', opcional=True) or '')
+
+
 def rectangulo_aplicacion(nombre):
     ventana = atributo(elemento_aplicacion(nombre), 'AXFocusedWindow')
     valores = []

@@ -18,7 +18,7 @@ from statistics_tracker import StatisticsTracker
 from menu import acciones_config
 from editor_catalog import EDITORES, binario_editor
 from editor_shortcut import resolver_atajo
-from mac_accessibility import documento_editor
+from mac_accessibility import documento_editor, titulo_editor
 
 
 class EditorNoDisponible(Exception):
@@ -337,7 +337,7 @@ class EditorInteractor(BaseAutomation):
         if not self._esperar_editor_al_frente(info):
             raise EditorNoDisponible("El editor no pasó a primer plano; se cancela la entrada")
         try:
-            documento_previo = documento_editor(EDITORES[self.editor_actual]['bundle']) if self.is_mac else ''
+            documento_previo = self._documento_activo() if self.is_mac else ''
             if self.is_mac and esperar_apertura:
                 # El CLI termina al entregar la solicitud, no al activar el archivo.
                 documento_previo = self._esperar_documento_mac(documento_previo)
@@ -356,7 +356,7 @@ class EditorInteractor(BaseAutomation):
                 # La ruta del documento (AXDocument) distingue el archivo del bot de uno del
                 # usuario con el mismo nombre.
                 self._antes_accion()
-                documento = documento_editor(EDITORES[self.editor_actual]['bundle'])
+                documento = self._documento_activo()
                 self._antes_accion()
                 if (self.reutilizar_ventana and _misma_ruta(documento_previo, self.ruta_archivo)
                         and not _misma_ruta(documento, self.ruta_archivo)):
@@ -389,13 +389,28 @@ class EditorInteractor(BaseAutomation):
             motivo = stderr or str(e)
             raise EditorNoDisponible(f"No se pudo verificar el archivo temporal: {motivo.strip()}") from e
 
+    def _documento_activo(self) -> str:
+        """URL del documento activo; usa el título de la ventana si el editor no expone AXDocument."""
+        bundle = EDITORES[self.editor_actual]['bundle']
+        documento = documento_editor(bundle)
+        if documento or not self.ruta_archivo:
+            return documento
+        # VS Code 1.108+ deja AXDocument vacío; su título es «archivo — carpeta».
+        try:
+            titulo = titulo_editor(bundle)
+        except (ValueError, OSError):
+            return ''
+        if titulo.split(' — ')[0] == os.path.basename(self.ruta_archivo):
+            return Path(self.ruta_archivo).as_uri()
+        return ''
+
     def _esperar_documento_mac(self, documento: str) -> str:
         limite = time.monotonic() + 5
         bundle = EDITORES[self.editor_actual]['bundle']
         self._antes_accion()
         while not _misma_ruta(documento, self.ruta_archivo) and time.monotonic() < limite:
             self._esperar(0.1)
-            documento = documento_editor(bundle)
+            documento = self._documento_activo()
             self._antes_accion()
         return documento
 
