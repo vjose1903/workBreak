@@ -1261,11 +1261,30 @@ class AutomationSafetyTest(unittest.TestCase):
 
     def test_dialogo_no_abierto_no_escribe_coordenadas(self):
         self.editor.is_mac = True
-        with patch.object(self.editor, '_leer_seleccion_mac', return_value='const codigo = 1;'):
+        with patch('editor_interactor.time.monotonic', side_effect=[0, 4, 4, 8]), \
+                patch.object(self.editor, '_asegurar_destino') as confirmar, \
+                patch.object(self.editor, '_leer_seleccion_mac', return_value='const codigo = 1;'):
             with self.assertRaises(EditorNoDisponible):
                 self.editor._ir_a_linea(115)
+        confirmar.assert_called_once()
         teclado.write.assert_not_called()
-        teclado.press.assert_called_once_with('esc')
+        self.assertEqual(teclado.press.call_count, 2)
+
+    def test_lectura_del_pegado_se_recupera_sin_pegar_otra_vez(self):
+        with patch.object(self.editor, '_leer_seleccion_mac', side_effect=[None, 'const x = 1;', 'const x = 1;']):
+            self.editor._sincronizar_codigo_pegado()
+        self.assertEqual(self.editor.lineas_actuales, ['const x = 1;'])
+        self.assertNotIn(unittest.mock.call(self.editor.cmd_key, 'v'), teclado.hotkey.call_args_list)
+
+    def test_timeout_pbcopy_solo_reintenta_si_el_portapapeles_no_cambio(self):
+        self.editor.is_mac, self.editor.is_windows = True, False
+        for version_final, exito in ((1, True), (2, False)):
+            with self.subTest(version_final=version_final), \
+                    patch('clipboard_state.version', side_effect=[1, version_final]), \
+                    patch.object(self.editor, '_ejecutar_proceso', side_effect=[
+                        subprocess.TimeoutExpired('pbcopy', 5), SimpleNamespace(returncode=0)]) as ejecutar:
+                self.assertEqual(self.editor._copiar_portapapeles_fallback('código'), exito)
+                self.assertEqual(ejecutar.call_count, 2 if exito else 1)
 
     def test_no_continua_si_el_dialogo_no_devuelve_foco_al_codigo(self):
         self.editor.is_mac = True

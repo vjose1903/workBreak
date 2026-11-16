@@ -432,7 +432,15 @@ class BaseAutomation:
             if self.is_windows:
                 resultado = self._ejecutar_proceso(["clip"], input=texto.encode('utf-16-le'), shell=True, timeout=5)
             else:
-                resultado = self._ejecutar_proceso(["pbcopy"], input=texto, text=True, timeout=5)
+                version = clipboard_state.version()
+                try:
+                    resultado = self._ejecutar_proceso(["pbcopy"], input=texto, text=True, timeout=5)
+                except subprocess.TimeoutExpired:
+                    self._antes_accion()
+                    if clipboard_state.version() != version:
+                        raise
+                    logging.warning("pbcopy agotó el tiempo; se reintenta una vez")
+                    resultado = self._ejecutar_proceso(["pbcopy"], input=texto, text=True, timeout=5)
             return resultado.returncode == 0
         except pyautogui.FailSafeException:
             raise

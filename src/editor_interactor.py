@@ -806,6 +806,7 @@ class EditorInteractor(BaseAutomation):
             # El quick input puede tomar el foco después de abrirse, especialmente al cargar.
             limite = time.monotonic() + 3.0
             intentos = 0
+            reabierto = False
             while True:
                 self._hotkey("command", "a")
                 campo = self._leer_seleccion_mac()
@@ -814,6 +815,14 @@ class EditorInteractor(BaseAutomation):
                 if campo is not None and re.fullmatch(r":\d*(?::\d*)?", campo) is not None:
                     break
                 if time.monotonic() >= limite:
+                    if not reabierto:
+                        self._press("esc")
+                        self._asegurar_destino()
+                        self._hotkey(*self.atajo_ir_linea)
+                        self._esperar(0.2)
+                        limite = time.monotonic() + 3.0
+                        reabierto = True
+                        continue
                     logging.error("No se confirmó Ir a línea: %s", json.dumps({
                         "editor": self.editor_actual, "atajo": self.atajo_ir_linea,
                         "intentos": intentos, "sin_seleccion": campo is None,
@@ -1009,11 +1018,11 @@ class EditorInteractor(BaseAutomation):
             self._hotkey(self.cmd_key, 'a')
             contenido = self._leer_seleccion_mac()
             self._press('left')
-            if contenido is None:
-                raise EditorNoDisponible("No se pudo leer el código pegado en el editor")
-            if contenido == anterior:
+            if contenido is not None and contenido == anterior:
                 break
             anterior = contenido
+        else:
+            raise EditorNoDisponible("No se pudo confirmar una lectura estable del código pegado en el editor")
         self.lineas_actuales = contenido.splitlines()
 
     def _resincronizar_codigo(self) -> None:
